@@ -5,13 +5,8 @@ build/
 # IntelliJ Platform plugin dev (downloaded IDE artifacts)
 .intellijPlatform/
 
-# IDE — user-specific or unrelated plugin configs
-.idea/workspace.xml
-.idea/shelf/
-.idea/httpRequests/
-.idea/dataSources/
-.idea/dataSources.local.xml
-.idea/UniappTool.xml
+# IDE
+.idea/
 
 # OS
 .DS_Store
