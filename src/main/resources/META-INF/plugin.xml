@@ -1,0 +1,20 @@
+<idea-plugin>
+    <id>com.github.cursorterm.cursor-cli-terminal</id>
+    <name>Cursor CLI Terminal</name>
+    <version>1.6.7</version>
+    <vendor>cursorterm</vendor>
+
+    <description><![CDATA[
+    Embeds cursor-agent in a GoLand tool window with scroll fixes for JediTerm.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Cursor CLI Terminal"
+            anchor="bottom"
+            factoryClass="com.github.cursorterm.CursorTerminalToolWindowFactory"
+            icon="/icons/cursor.svg" />
+    </extensions>
+</idea-plugin>

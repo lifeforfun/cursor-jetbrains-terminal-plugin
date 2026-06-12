@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+
+# IntelliJ Platform plugin dev (downloaded IDE artifacts)
+.intellijPlatform/
+
+# IDE — user-specific or unrelated plugin configs
+.idea/workspace.xml
+.idea/shelf/
+.idea/httpRequests/
+.idea/dataSources/
+.idea/dataSources.local.xml
+.idea/UniappTool.xml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & local overrides
+*.log
+*.local
