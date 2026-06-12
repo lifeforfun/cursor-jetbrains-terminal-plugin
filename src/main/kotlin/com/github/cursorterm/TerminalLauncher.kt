@@ -5,10 +5,13 @@ import com.intellij.openapi.project.Project
 object TerminalLauncher {
 
     /**
-     * 每次打开 Tool Window 都启动全新的 cursor-agent 进程。
-     * 不复用 tmux 会话，避免历史对话残留在 scrollback 里。
+     * 启动 cursor-agent；若该项目存在历史会话则自动 --resume 最近一次对话。
      */
-    fun buildShellCommand(@Suppress("UNUSED_PARAMETER") project: Project): List<String> {
-        return listOf("cursor-agent")
+    fun buildShellCommand(project: Project): List<String> {
+        val command = mutableListOf("cursor-agent")
+        CursorAgentSessionStore.findLastSessionId(project.basePath)?.let { sessionId ->
+            command += listOf("--resume", sessionId)
+        }
+        return command
     }
 }

@@ -1,9 +1,9 @@
 package com.github.cursorterm
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.openapi.application.ApplicationManager
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.ShellStartupOptions
@@ -34,6 +34,7 @@ class CursorTerminalToolWindowFactory : ToolWindowFactory {
                 val shellWidget = ShellTerminalWidget.toShellJediTermWidgetOrThrow(terminalWidget)
                 TerminalScrollFix(shellWidget, content).install()
                 ImagePasteSupport(shellWidget, content).install()
+                EditorContextOnSubmitSupport.installOnce(project, shellWidget, content)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
