@@ -7,13 +7,11 @@ import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import java.awt.KeyboardFocusManager
 import java.awt.event.InputMethodEvent
 import java.awt.event.InputMethodListener
+import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import javax.swing.SwingUtilities
 
-/**
- * 跟踪自上次成功提交以来，用户是否在终端键入过内容。
- * cursor-agent TUI 下按键可能不经过 PreKey，故用 KeyEventDispatcher 全局观察（不 consume）。
- */
+/** 跟踪终端输入与 `\` 续行。 */
 class TerminalInputTracker(
     private val shellWidget: ShellTerminalWidget,
     private val parentDisposable: Disposable,
@@ -22,7 +20,6 @@ class TerminalInputTracker(
     @Volatile
     private var hasUserInput = false
 
-    /** 上一字符为 `\` / `＼` 时，下一次 Enter 为换行续写，不注入 @。 */
     @Volatile
     private var lineContinuationPending = false
 
@@ -31,10 +28,7 @@ class TerminalInputTracker(
     private val keyDispatcher = KeyboardFocusManager.getCurrentKeyboardFocusManager().let { manager ->
         java.awt.KeyEventDispatcher { event ->
             if (!isEventForTerminal(event)) return@KeyEventDispatcher false
-            when (event.id) {
-                KeyEvent.KEY_TYPED -> onKeyTyped(event.keyChar)
-                KeyEvent.KEY_PRESSED -> onKeyPressed(event)
-            }
+            dispatchKeyEvent(event)
             false
         }.also { dispatcher ->
             manager.addKeyEventDispatcher(dispatcher)
@@ -49,11 +43,15 @@ class TerminalInputTracker(
 
     fun hasUserInput(): Boolean = hasUserInput
 
-    /** Enter 前若以 `\` 续行，返回 true 并清除续行标记（不重置 hasUserInput）。 */
     fun consumeLineContinuationEnter(): Boolean {
         if (!lineContinuationPending) return false
         lineContinuationPending = false
         return true
+    }
+
+    fun onShiftEnter() {
+        hasUserInput = false
+        lineContinuationPending = false
     }
 
     fun reset() {
@@ -62,6 +60,16 @@ class TerminalInputTracker(
     }
 
     fun install() {
+        val panelListener = object : KeyAdapter() {
+            override fun keyTyped(e: KeyEvent) = onKeyTyped(e.keyChar)
+
+            override fun keyPressed(e: KeyEvent) = onKeyPressed(e)
+        }
+        terminalPanel.addKeyListener(panelListener)
+        Disposer.register(parentDisposable) {
+            terminalPanel.removeKeyListener(panelListener)
+        }
+
         val inputMethodListener = object : InputMethodListener {
             override fun inputMethodTextChanged(event: InputMethodEvent) {
                 if (event.committedCharacterCount <= 0 || !isTerminalFocused()) return
@@ -80,10 +88,19 @@ class TerminalInputTracker(
         }
     }
 
+    private fun dispatchKeyEvent(event: KeyEvent) {
+        when (event.id) {
+            KeyEvent.KEY_TYPED -> onKeyTyped(event.keyChar)
+            KeyEvent.KEY_PRESSED -> onKeyPressed(event)
+        }
+    }
+
     private fun isEventForTerminal(event: KeyEvent): Boolean {
-        if (!isTerminalFocused()) return false
-        val source = event.component ?: return true
-        return SwingUtilities.isDescendingFrom(source, terminalPanel)
+        val source = event.component
+        if (source != null && SwingUtilities.isDescendingFrom(source, terminalPanel)) {
+            return true
+        }
+        return isTerminalFocused()
     }
 
     private fun isTerminalFocused(): Boolean {
@@ -91,10 +108,6 @@ class TerminalInputTracker(
         return SwingUtilities.isDescendingFrom(focusOwner, terminalPanel)
     }
 
-    /**
-     * 仅 KEY_TYPED 更新续行标记。KEY_PRESSED 在 Shift 组合键下 keyChar 不可靠
-     * （如按 Shift 输入 `?` 时误报 `\`），会导致无法输入问号且 Enter 被当成续行。
-     */
     private fun onKeyTyped(ch: Char) {
         if (ch == KeyEvent.CHAR_UNDEFINED || ch.isISOControl()) return
         hasUserInput = true
@@ -102,12 +115,18 @@ class TerminalInputTracker(
     }
 
     private fun onKeyPressed(event: KeyEvent) {
-        if (isPlainEnter(event)) return
-        if (event.isControlDown || event.isAltDown || event.isMetaDown) {
-            if (event.isControlDown && event.keyCode == KeyEvent.VK_V) {
-                hasUserInput = true
-                lineContinuationPending = false
-            }
+        if (event.keyCode == KeyEvent.VK_ENTER && event.isShiftDown) {
+            onShiftEnter()
+            return
+        }
+        if (event.keyCode == KeyEvent.VK_ENTER) return
+        if (event.isControlDown && event.keyCode == KeyEvent.VK_V) {
+            hasUserInput = true
+            lineContinuationPending = false
+            return
+        }
+        if (event.keyCode == KeyEvent.VK_BACK_SLASH && !hasModifiers(event)) {
+            lineContinuationPending = true
             return
         }
         if (event.keyCode == KeyEvent.VK_BACK_SPACE || event.keyCode == KeyEvent.VK_DELETE) {
@@ -115,14 +134,15 @@ class TerminalInputTracker(
             return
         }
         if (isNavigationKey(event.keyCode)) return
+        if (event.isControlDown || event.isAltDown || event.isMetaDown) return
         hasUserInput = true
     }
 
+    private fun hasModifiers(event: KeyEvent): Boolean =
+        event.isShiftDown || event.isControlDown || event.isAltDown || event.isMetaDown
+
     private fun isLineContinuationChar(ch: Char): Boolean =
         ch == '\\' || ch == '＼'
-
-    private fun isPlainEnter(event: KeyEvent): Boolean =
-        event.keyCode == KeyEvent.VK_ENTER && event.modifiersEx == 0
 
     private fun isNavigationKey(keyCode: Int): Boolean = when (keyCode) {
         KeyEvent.VK_LEFT, KeyEvent.VK_RIGHT, KeyEvent.VK_UP, KeyEvent.VK_DOWN,
