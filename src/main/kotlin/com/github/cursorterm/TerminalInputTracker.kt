@@ -32,7 +32,7 @@ class TerminalInputTracker(
         java.awt.KeyEventDispatcher { event ->
             if (!isEventForTerminal(event)) return@KeyEventDispatcher false
             when (event.id) {
-                KeyEvent.KEY_TYPED -> markIfPrintable(event.keyChar)
+                KeyEvent.KEY_TYPED -> onKeyTyped(event.keyChar)
                 KeyEvent.KEY_PRESSED -> onKeyPressed(event)
             }
             false
@@ -64,8 +64,11 @@ class TerminalInputTracker(
     fun install() {
         val inputMethodListener = object : InputMethodListener {
             override fun inputMethodTextChanged(event: InputMethodEvent) {
-                if (event.committedCharacterCount > 0 && isTerminalFocused()) {
-                    hasUserInput = true
+                if (event.committedCharacterCount <= 0 || !isTerminalFocused()) return
+                hasUserInput = true
+                val committed = event.text?.toString()?.takeLast(event.committedCharacterCount).orEmpty()
+                if (committed.isNotEmpty()) {
+                    lineContinuationPending = isLineContinuationChar(committed.last())
                 }
             }
 
@@ -88,6 +91,16 @@ class TerminalInputTracker(
         return SwingUtilities.isDescendingFrom(focusOwner, terminalPanel)
     }
 
+    /**
+     * 仅 KEY_TYPED 更新续行标记。KEY_PRESSED 在 Shift 组合键下 keyChar 不可靠
+     * （如按 Shift 输入 `?` 时误报 `\`），会导致无法输入问号且 Enter 被当成续行。
+     */
+    private fun onKeyTyped(ch: Char) {
+        if (ch == KeyEvent.CHAR_UNDEFINED || ch.isISOControl()) return
+        hasUserInput = true
+        lineContinuationPending = isLineContinuationChar(ch)
+    }
+
     private fun onKeyPressed(event: KeyEvent) {
         if (isPlainEnter(event)) return
         if (event.isControlDown || event.isAltDown || event.isMetaDown) {
@@ -102,15 +115,7 @@ class TerminalInputTracker(
             return
         }
         if (isNavigationKey(event.keyCode)) return
-        markIfPrintable(event.keyChar)
         hasUserInput = true
-    }
-
-    private fun markIfPrintable(ch: Char) {
-        if (ch != KeyEvent.CHAR_UNDEFINED && !ch.isISOControl()) {
-            hasUserInput = true
-            lineContinuationPending = isLineContinuationChar(ch)
-        }
     }
 
     private fun isLineContinuationChar(ch: Char): Boolean =
