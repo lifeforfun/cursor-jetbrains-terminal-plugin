@@ -12,7 +12,7 @@ import java.util.function.Consumer
 /**
  * Enter 提交时：输入框有内容 + 有激活编辑器 → PreKey 追加 @ 引用，再由终端原生 Enter 提交。
  *
- * 输入框为空时不注入 @，也不 consume Enter（待发送列表操作 / agent 处理中仍可用 Enter）。
+ * 输入框为空时不注入 @（待发送列表 / agent 处理中仍可用 Enter）。
  * Shift+Enter 留给 cursor-agent 换行或打断，不注入 @。
  */
 class EditorContextOnSubmitSupport private constructor(
@@ -26,9 +26,10 @@ class EditorContextOnSubmitSupport private constructor(
         inputTracker.install()
         val panel = shellWidget.terminalPanel
         var active = true
-        var lastInjectAtMs = 0L
         val handler = Consumer<KeyEvent> { event ->
             if (!active) return@Consumer
+            inputTracker.handlePreKeyEvent(event)
+
             if (event.id != KeyEvent.KEY_PRESSED) return@Consumer
             if (event.isConsumed) return@Consumer
 
@@ -41,14 +42,11 @@ class EditorContextOnSubmitSupport private constructor(
             if (EditorContextCollector.collect(project) == null) return@Consumer
             if (!inputTracker.hasUserInput()) return@Consumer
             if (inputTracker.consumeLineContinuationEnter()) return@Consumer
-
-            val now = System.currentTimeMillis()
-            if (now - lastInjectAtMs < 300) return@Consumer
-            lastInjectAtMs = now
+            if (!EnterInjectGate.tryAcquire(event)) return@Consumer
 
             val ref = EditorContextCollector.collect(project)?.toAtNotation() ?: return@Consumer
             val starter = shellWidget.terminalStarter ?: return@Consumer
-            starter.sendString(" $ref", true)
+            starter.sendString("${System.lineSeparator()}$ref", true)
             inputTracker.reset()
         }
         panel.addPreKeyEventHandler(handler)
@@ -64,11 +62,34 @@ class EditorContextOnSubmitSupport private constructor(
         event.keyCode == KeyEvent.VK_ENTER && event.isShiftDown
 
     private fun hasSubmitModifiers(event: KeyEvent): Boolean =
-        event.isShiftDown || event.isControlDown || event.isAltDown || event.isMetaDown ||
-            event.modifiersEx != 0
+        event.isShiftDown || event.isControlDown || event.isAltDown || event.isMetaDown
+
+    /**
+     * 同一物理 Enter 可能被多个 PreKey 钩子各处理一次；用 [KeyEvent.getWhen] 全局去重。
+     */
+    private object EnterInjectGate {
+        @Volatile
+        private var lastInjectedEnterWhen = Long.MIN_VALUE
+
+        @Volatile
+        private var lastInjectAtMs = 0L
+
+        fun tryAcquire(event: KeyEvent): Boolean {
+            val enterWhen = event.`when`
+            val now = System.currentTimeMillis()
+            synchronized(this) {
+                if (now - lastInjectAtMs < 300 || enterWhen == lastInjectedEnterWhen) {
+                    return false
+                }
+                lastInjectedEnterWhen = enterWhen
+                lastInjectAtMs = now
+                return true
+            }
+        }
+    }
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.0"
+        private const val PLUGIN_HOOK_VERSION = "1.8.7"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
 

@@ -1,83 +1,73 @@
 package com.github.cursorterm
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.util.Disposer
-import com.intellij.terminal.JBTerminalPanel
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
-import java.awt.KeyboardFocusManager
 import java.awt.event.InputMethodEvent
 import java.awt.event.InputMethodListener
-import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
-import javax.swing.SwingUtilities
 
-/** 跟踪终端输入与 `\` 续行。 */
+/**
+ * 跟踪终端当前行是否有用户输入，以及 `\` 续行。
+ *
+ * cursor-agent TUI 不经 Swing/缓冲区，以 PTY 写入拦截为主。
+ */
 class TerminalInputTracker(
     private val shellWidget: ShellTerminalWidget,
     private val parentDisposable: Disposable,
 ) {
 
     @Volatile
-    private var hasUserInput = false
+    private var capturingConnector: CapturingTtyConnector? = null
 
     @Volatile
     private var lineContinuationPending = false
 
+    @Volatile
+    private var pastePending = false
+
+    private val shadowInput = StringBuilder()
+
     private val terminalPanel = shellWidget.terminalPanel
 
-    private val keyDispatcher = KeyboardFocusManager.getCurrentKeyboardFocusManager().let { manager ->
-        java.awt.KeyEventDispatcher { event ->
-            if (!isEventForTerminal(event)) return@KeyEventDispatcher false
-            dispatchKeyEvent(event)
-            false
-        }.also { dispatcher ->
-            manager.addKeyEventDispatcher(dispatcher)
-            Disposer.register(parentDisposable) {
-                manager.removeKeyEventDispatcher(dispatcher)
-            }
-        }
-    }
-
-    @Suppress("unused")
-    private val dispatcherHolder = keyDispatcher
-
-    fun hasUserInput(): Boolean = hasUserInput
+    fun hasUserInput(): Boolean = resolveTypedCommand().isNotBlank()
 
     fun consumeLineContinuationEnter(): Boolean {
+        if (capturingConnector?.hasLineContinuationPending() == true) {
+            capturingConnector?.consumeLineContinuation()
+            return true
+        }
         if (!lineContinuationPending) return false
         lineContinuationPending = false
         return true
     }
 
     fun onShiftEnter() {
-        hasUserInput = false
-        lineContinuationPending = false
+        clearTrackedInput()
     }
 
     fun reset() {
-        hasUserInput = false
-        lineContinuationPending = false
+        clearTrackedInput()
+    }
+
+    fun handlePreKeyEvent(event: KeyEvent) {
+        when (event.id) {
+            KeyEvent.KEY_TYPED -> appendShadowChar(event.keyChar)
+            KeyEvent.KEY_PRESSED -> handleKeyPressed(event)
+        }
     }
 
     fun install() {
-        val panelListener = object : KeyAdapter() {
-            override fun keyTyped(e: KeyEvent) = onKeyTyped(e.keyChar)
-
-            override fun keyPressed(e: KeyEvent) = onKeyPressed(e)
-        }
-        terminalPanel.addKeyListener(panelListener)
-        Disposer.register(parentDisposable) {
-            terminalPanel.removeKeyListener(panelListener)
-        }
+        installPtyCapture(retry = 0)
 
         val inputMethodListener = object : InputMethodListener {
             override fun inputMethodTextChanged(event: InputMethodEvent) {
-                if (event.committedCharacterCount <= 0 || !isTerminalFocused()) return
-                hasUserInput = true
+                if (event.committedCharacterCount <= 0) return
                 val committed = event.text?.toString()?.takeLast(event.committedCharacterCount).orEmpty()
-                if (committed.isNotEmpty()) {
-                    lineContinuationPending = isLineContinuationChar(committed.last())
-                }
+                if (committed.isEmpty()) return
+                shadowInput.append(committed)
+                lineContinuationPending = isLineContinuationChar(committed.last())
             }
 
             override fun caretPositionChanged(event: InputMethodEvent) = Unit
@@ -88,54 +78,65 @@ class TerminalInputTracker(
         }
     }
 
-    private fun dispatchKeyEvent(event: KeyEvent) {
-        when (event.id) {
-            KeyEvent.KEY_TYPED -> onKeyTyped(event.keyChar)
-            KeyEvent.KEY_PRESSED -> onKeyPressed(event)
+    private fun installPtyCapture(retry: Int) {
+        val starter = shellWidget.terminalStarter
+        if (starter == null) {
+            if (retry < 30) {
+                ApplicationManager.getApplication().invokeLater {
+                    installPtyCapture(retry + 1)
+                }
+            }
+            return
+        }
+        try {
+            capturingConnector = CapturingTtyConnector.installOn(starter)
+        } catch (_: Exception) {
+            if (retry < 30) {
+                ApplicationManager.getApplication().invokeLater {
+                    installPtyCapture(retry + 1)
+                }
+            }
         }
     }
 
-    private fun isEventForTerminal(event: KeyEvent): Boolean {
-        val source = event.component
-        if (source != null && SwingUtilities.isDescendingFrom(source, terminalPanel)) {
-            return true
-        }
-        return isTerminalFocused()
+    private fun clearTrackedInput() {
+        shadowInput.setLength(0)
+        pastePending = false
+        lineContinuationPending = false
+        capturingConnector?.clearLine()
     }
 
-    private fun isTerminalFocused(): Boolean {
-        val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner ?: return false
-        return SwingUtilities.isDescendingFrom(focusOwner, terminalPanel)
+    private fun resolveTypedCommand(): String {
+        val ptyLine = capturingConnector?.currentLine()?.trim().orEmpty()
+        if (ptyLine.isNotBlank()) return ptyLine
+
+        val shadow = shadowInput.toString().trim()
+        if (shadow.isNotBlank()) return shadow
+
+        if (pastePending) return " "
+        return ""
     }
 
-    private fun onKeyTyped(ch: Char) {
+    private fun appendShadowChar(ch: Char) {
         if (ch == KeyEvent.CHAR_UNDEFINED || ch.isISOControl()) return
-        hasUserInput = true
+        shadowInput.append(ch)
         lineContinuationPending = isLineContinuationChar(ch)
     }
 
-    private fun onKeyPressed(event: KeyEvent) {
-        if (event.keyCode == KeyEvent.VK_ENTER && event.isShiftDown) {
-            onShiftEnter()
-            return
+    private fun handleKeyPressed(event: KeyEvent) {
+        when {
+            event.keyCode == KeyEvent.VK_ENTER && event.isShiftDown -> onShiftEnter()
+            event.keyCode == KeyEvent.VK_BACK_SLASH && !hasModifiers(event) -> lineContinuationPending = true
+            event.keyCode == KeyEvent.VK_BACK_SPACE -> {
+                if (shadowInput.isNotEmpty()) {
+                    shadowInput.deleteCharAt(shadowInput.length - 1)
+                }
+                lineContinuationPending = false
+            }
+            event.keyCode == KeyEvent.VK_DELETE -> lineContinuationPending = false
+            event.isControlDown && event.keyCode == KeyEvent.VK_V -> pastePending = true
+            event.isControlDown && event.keyCode in CLEAR_BUFFER_KEYS -> clearTrackedInput()
         }
-        if (event.keyCode == KeyEvent.VK_ENTER) return
-        if (event.isControlDown && event.keyCode == KeyEvent.VK_V) {
-            hasUserInput = true
-            lineContinuationPending = false
-            return
-        }
-        if (event.keyCode == KeyEvent.VK_BACK_SLASH && !hasModifiers(event)) {
-            lineContinuationPending = true
-            return
-        }
-        if (event.keyCode == KeyEvent.VK_BACK_SPACE || event.keyCode == KeyEvent.VK_DELETE) {
-            lineContinuationPending = false
-            return
-        }
-        if (isNavigationKey(event.keyCode)) return
-        if (event.isControlDown || event.isAltDown || event.isMetaDown) return
-        hasUserInput = true
     }
 
     private fun hasModifiers(event: KeyEvent): Boolean =
@@ -144,13 +145,11 @@ class TerminalInputTracker(
     private fun isLineContinuationChar(ch: Char): Boolean =
         ch == '\\' || ch == '＼'
 
-    private fun isNavigationKey(keyCode: Int): Boolean = when (keyCode) {
-        KeyEvent.VK_LEFT, KeyEvent.VK_RIGHT, KeyEvent.VK_UP, KeyEvent.VK_DOWN,
-        KeyEvent.VK_PAGE_UP, KeyEvent.VK_PAGE_DOWN, KeyEvent.VK_HOME, KeyEvent.VK_END,
-        KeyEvent.VK_TAB, KeyEvent.VK_ESCAPE,
-        KeyEvent.VK_SHIFT, KeyEvent.VK_CONTROL, KeyEvent.VK_ALT, KeyEvent.VK_META,
-        KeyEvent.VK_CAPS_LOCK,
-        -> true
-        else -> false
+    companion object {
+        private val CLEAR_BUFFER_KEYS = setOf(
+            KeyEvent.VK_A,
+            KeyEvent.VK_K,
+            KeyEvent.VK_U,
+        )
     }
 }

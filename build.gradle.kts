@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.github.cursorterm"
-version = "1.8.0"
+version = "1.8.7"
 
 repositories {
     mavenCentral()
@@ -24,10 +24,15 @@ java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 configurations.runtimeClasspath {
@@ -39,7 +44,7 @@ configurations.runtimeClasspath {
 
 tasks {
     patchPluginXml {
-        sinceBuild.set("251")
+        sinceBuild.set("233")
         untilBuild.set("999.*")
     }
 }

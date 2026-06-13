@@ -1,11 +1,13 @@
 <idea-plugin>
     <id>com.github.cursorterm.cursor-cli-terminal</id>
     <name>Cursor CLI Terminal</name>
-    <version>1.6.7</version>
+    <version>1.8.7</version>
     <vendor>cursorterm</vendor>
 
     <description><![CDATA[
-    Embeds cursor-agent in a GoLand tool window with scroll fixes for JediTerm.
+    Embeds cursor-agent in a JetBrains IDE tool window. Supports session resume,
+    Enter-to-append @file references from the active editor tab, and JediTerm scroll fixes.
+    Compatible with IntelliJ Platform 2023.3+ (build 233).
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
