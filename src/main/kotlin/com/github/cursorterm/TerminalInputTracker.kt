@@ -22,6 +22,10 @@ class TerminalInputTracker(
     @Volatile
     private var hasUserInput = false
 
+    /** 上一字符为 `\` / `＼` 时，下一次 Enter 为换行续写，不注入 @。 */
+    @Volatile
+    private var lineContinuationPending = false
+
     private val terminalPanel = shellWidget.terminalPanel
 
     private val keyDispatcher = KeyboardFocusManager.getCurrentKeyboardFocusManager().let { manager ->
@@ -45,8 +49,16 @@ class TerminalInputTracker(
 
     fun hasUserInput(): Boolean = hasUserInput
 
+    /** Enter 前若以 `\` 续行，返回 true 并清除续行标记（不重置 hasUserInput）。 */
+    fun consumeLineContinuationEnter(): Boolean {
+        if (!lineContinuationPending) return false
+        lineContinuationPending = false
+        return true
+    }
+
     fun reset() {
         hasUserInput = false
+        lineContinuationPending = false
     }
 
     fun install() {
@@ -81,7 +93,12 @@ class TerminalInputTracker(
         if (event.isControlDown || event.isAltDown || event.isMetaDown) {
             if (event.isControlDown && event.keyCode == KeyEvent.VK_V) {
                 hasUserInput = true
+                lineContinuationPending = false
             }
+            return
+        }
+        if (event.keyCode == KeyEvent.VK_BACK_SPACE || event.keyCode == KeyEvent.VK_DELETE) {
+            lineContinuationPending = false
             return
         }
         if (isNavigationKey(event.keyCode)) return
@@ -92,8 +109,12 @@ class TerminalInputTracker(
     private fun markIfPrintable(ch: Char) {
         if (ch != KeyEvent.CHAR_UNDEFINED && !ch.isISOControl()) {
             hasUserInput = true
+            lineContinuationPending = isLineContinuationChar(ch)
         }
     }
+
+    private fun isLineContinuationChar(ch: Char): Boolean =
+        ch == '\\' || ch == '＼'
 
     private fun isPlainEnter(event: KeyEvent): Boolean =
         event.keyCode == KeyEvent.VK_ENTER && event.modifiersEx == 0

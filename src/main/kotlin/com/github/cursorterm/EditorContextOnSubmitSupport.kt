@@ -38,6 +38,10 @@ class EditorContextOnSubmitSupport private constructor(
                 return@Consumer
             }
 
+            if (inputTracker.consumeLineContinuationEnter()) {
+                return@Consumer
+            }
+
             val ref = EditorContextCollector.collect(project)?.toAtNotation() ?: return@Consumer
             val starter = shellWidget.terminalStarter ?: return@Consumer
             starter.sendString(" $ref", true)
@@ -53,7 +57,7 @@ class EditorContextOnSubmitSupport private constructor(
         event.keyCode == KeyEvent.VK_ENTER && event.modifiersEx == 0
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.7.3"
+        private const val PLUGIN_HOOK_VERSION = "1.7.4"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
 
         fun installOnce(project: Project, shellWidget: ShellTerminalWidget, content: Content) {
