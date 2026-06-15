@@ -108,14 +108,18 @@ class CapturingTtyConnector(
     companion object {
         private const val ESC = 0x1B.toByte()
 
+        fun wrap(connector: TtyConnector): CapturingTtyConnector =
+            if (connector is CapturingTtyConnector) connector else CapturingTtyConnector(connector)
+
         fun installOn(starter: TerminalStarter): CapturingTtyConnector {
             val field = TerminalStarter::class.java.getDeclaredField("myTtyConnector")
             field.isAccessible = true
             val current = field.get(starter) as TtyConnector
-            if (current is CapturingTtyConnector) return current
-            val wrapper = CapturingTtyConnector(current)
-            field.set(starter, wrapper)
-            return wrapper
+            val wrapped = wrap(current)
+            if (wrapped !== current) {
+                field.set(starter, wrapped)
+            }
+            return wrapped
         }
     }
 }

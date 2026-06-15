@@ -6,52 +6,107 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.project.Project
 import com.intellij.ui.content.Content
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.util.function.Consumer
+import javax.swing.SwingUtilities
 
-/**
- * Enter 提交时：输入框有内容 + 有激活编辑器 → PreKey 追加 @ 引用，再由终端原生 Enter 提交。
- *
- * 输入框为空时不注入 @（待发送列表 / agent 处理中仍可用 Enter）。
- * Shift+Enter 留给 cursor-agent 换行或打断，不注入 @。
- */
 class EditorContextOnSubmitSupport private constructor(
     private val project: Project,
     private val shellWidget: ShellTerminalWidget,
+    private val content: Content,
     private val inputTracker: TerminalInputTracker,
     private val parentDisposable: Disposable,
 ) {
 
+    @Volatile
+    private var active = true
+
     fun install() {
+        EditorContextCollector.installTracking(project, parentDisposable)
         inputTracker.install()
         val panel = shellWidget.terminalPanel
-        var active = true
+        installTerminalFocusSnapshot(panel)
+        installEnterHandlers(panel)
+        Disposer.register(parentDisposable) {
+            active = false
+        }
+    }
+
+    private fun installEnterHandlers(panel: java.awt.Component) {
         val handler = Consumer<KeyEvent> { event ->
             if (!active) return@Consumer
             inputTracker.handlePreKeyEvent(event)
-
             if (event.id != KeyEvent.KEY_PRESSED) return@Consumer
             if (event.isConsumed) return@Consumer
-
-            if (isShiftEnter(event)) {
-                inputTracker.onShiftEnter()
-                return@Consumer
-            }
-
-            if (!isSubmitEnter(event)) return@Consumer
-            if (EditorContextCollector.collect(project) == null) return@Consumer
-            if (!inputTracker.hasUserInput()) return@Consumer
-            if (inputTracker.consumeLineContinuationEnter()) return@Consumer
-            if (!EnterInjectGate.tryAcquire(event)) return@Consumer
-
-            val ref = EditorContextCollector.collect(project)?.toAtNotation() ?: return@Consumer
-            val starter = shellWidget.terminalStarter ?: return@Consumer
-            starter.sendString("${System.lineSeparator()}$ref", true)
-            inputTracker.reset()
+            processSubmitEnter(event)
         }
-        panel.addPreKeyEventHandler(handler)
+        TerminalPreKeySupport.installFirst(panel, handler)
+        installEnterKeyDispatcher(panel)
+    }
+
+    private fun installEnterKeyDispatcher(panel: java.awt.Component) {
+        val manager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        val dispatcher = java.awt.KeyEventDispatcher { event ->
+            if (!active) return@KeyEventDispatcher false
+            if (event.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
+            if (event.keyCode != KeyEvent.VK_ENTER) return@KeyEventDispatcher false
+            if (!isEventForTerminal(event, panel)) return@KeyEventDispatcher false
+
+            inputTracker.handlePreKeyEvent(event)
+            processSubmitEnter(event)
+            false
+        }
+        manager.addKeyEventDispatcher(dispatcher)
         Disposer.register(parentDisposable) {
-            active = false
+            manager.removeKeyEventDispatcher(dispatcher)
+        }
+    }
+
+    private fun processSubmitEnter(event: KeyEvent) {
+        if (isShiftEnter(event)) {
+            inputTracker.onShiftEnter()
+            return
+        }
+        if (!isSubmitEnter(event)) return
+
+        TerminalScrollFix.notifySubmitEnter(content, shellWidget)
+
+        inputTracker.refreshPtyCapture()
+
+        val reference = EditorContextCollector.collect(project)
+        val inputSnapshot = inputTracker.inputSnapshot()
+        if (reference == null) return
+        if (!inputSnapshot.hasUserInput) return
+        if (inputTracker.consumeLineContinuationEnter()) return
+        if (!EnterInjectGate.tryAcquire(event)) return
+
+        val ref = reference.toAtNotation()
+        val sent = TerminalSendSupport.sendString(shellWidget, "${System.lineSeparator()}$ref")
+        if (!sent) return
+        inputTracker.reset()
+    }
+
+    private fun isEventForTerminal(event: KeyEvent, panel: java.awt.Component): Boolean {
+        val source = event.component
+        if (source != null && SwingUtilities.isDescendingFrom(source, panel)) {
+            return true
+        }
+        val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner ?: return false
+        return SwingUtilities.isDescendingFrom(focusOwner, panel)
+    }
+
+    private fun installTerminalFocusSnapshot(panel: java.awt.Component) {
+        val listener = object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                EditorContextCollector.snapshotActiveEditor(project)
+            }
+        }
+        panel.addMouseListener(listener)
+        Disposer.register(parentDisposable) {
+            panel.removeMouseListener(listener)
         }
     }
 
@@ -64,9 +119,6 @@ class EditorContextOnSubmitSupport private constructor(
     private fun hasSubmitModifiers(event: KeyEvent): Boolean =
         event.isShiftDown || event.isControlDown || event.isAltDown || event.isMetaDown
 
-    /**
-     * 同一物理 Enter 可能被多个 PreKey 钩子各处理一次；用 [KeyEvent.getWhen] 全局去重。
-     */
     private object EnterInjectGate {
         @Volatile
         private var lastInjectedEnterWhen = Long.MIN_VALUE
@@ -89,7 +141,7 @@ class EditorContextOnSubmitSupport private constructor(
     }
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.7"
+        private const val PLUGIN_HOOK_VERSION = "1.8.18"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
 
@@ -99,12 +151,13 @@ class EditorContextOnSubmitSupport private constructor(
             content.getUserData(INSTALLATION)?.let { Disposer.dispose(it) }
 
             val installation = Disposer.newDisposable("EditorContextOnSubmit")
-            content.putUserData(INSTALLATION, installation)
-            content.putUserData(INSTALLED_VERSION, PLUGIN_HOOK_VERSION)
             Disposer.register(content, installation)
 
             val inputTracker = TerminalInputTracker(shellWidget, installation)
-            EditorContextOnSubmitSupport(project, shellWidget, inputTracker, installation).install()
+            EditorContextOnSubmitSupport(project, shellWidget, content, inputTracker, installation).install()
+
+            content.putUserData(INSTALLATION, installation)
+            content.putUserData(INSTALLED_VERSION, PLUGIN_HOOK_VERSION)
         }
     }
 }

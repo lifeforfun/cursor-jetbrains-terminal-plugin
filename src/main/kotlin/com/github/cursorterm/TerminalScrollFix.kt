@@ -1,10 +1,11 @@
 package com.github.cursorterm
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.util.Key
+import com.intellij.ui.content.Content
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.util.Alarm
-import com.jediterm.terminal.model.TerminalHistoryBufferListener
 import com.jediterm.terminal.ui.TerminalPanel
 import com.jediterm.terminal.ui.settings.SettingsProvider
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
@@ -50,6 +51,16 @@ class TerminalScrollFix(
     private var userAnchorValue = BOTTOM_VALUE
 
     private var lastUserScrollAt = 0L
+
+    fun onSubmitEnter() {
+        runOnEdt {
+            followOutput = true
+            userAnchorValue = BOTTOM_VALUE
+            ensureHistoryScrollingEnabled()
+            stickToBottom()
+            schedulePostOutputGuard()
+        }
+    }
 
     fun install() {
         patchSettingsProvider()
@@ -218,22 +229,35 @@ class TerminalScrollFix(
 
     private fun installOutputFollow() {
         val textBuffer = terminalPanel.terminalTextBuffer
-        textBuffer.addModelListener {
+        val onOutput = {
             runOnEdt {
                 ensureHistoryScrollingEnabled()
                 followIfNeeded()
                 schedulePostOutputGuard()
             }
         }
-        textBuffer.addHistoryBufferListener(object : TerminalHistoryBufferListener {
-            override fun historyBufferLineCountChanged() {
-                runOnEdt {
-                    ensureHistoryScrollingEnabled()
-                    followIfNeeded()
-                    schedulePostOutputGuard()
-                }
-            }
-        })
+        textBuffer.addModelListener { onOutput() }
+        installHistoryBufferListenerIfSupported(textBuffer, onOutput)
+    }
+
+    private fun installHistoryBufferListenerIfSupported(textBuffer: Any, onOutput: () -> Unit) {
+        try {
+            val listenerClass = Class.forName("com.jediterm.terminal.model.TerminalHistoryBufferListener")
+            val listener = Proxy.newProxyInstance(
+                listenerClass.classLoader,
+                arrayOf(listenerClass),
+                InvocationHandler { _, method, _ ->
+                    if (method.name == "historyBufferLineCountChanged") {
+                        onOutput()
+                    }
+                    null
+                },
+            )
+            textBuffer.javaClass.getMethod("addHistoryBufferListener", listenerClass)
+                .invoke(textBuffer, listener)
+        } catch (_: Exception) {
+            // PyCharm 2023.3 等旧版 JediTerm 无此 API
+        }
     }
 
     private fun scheduleFollowCheck() {
@@ -342,6 +366,29 @@ class TerminalScrollFix(
     }
 
     companion object {
+        private val SCROLL_FIX_KEY = Key.create<TerminalScrollFix>("cursorterm.scrollFix")
+
+        fun installOn(content: Content, shellWidget: ShellTerminalWidget, parentDisposable: Disposable): TerminalScrollFix? {
+            return try {
+                TerminalScrollFix(shellWidget, parentDisposable).also { fix ->
+                    fix.install()
+                    content.putUserData(SCROLL_FIX_KEY, fix)
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        fun notifySubmitEnter(content: Content, shellWidget: ShellTerminalWidget) {
+            val fix = content.getUserData(SCROLL_FIX_KEY)
+            if (fix != null) {
+                fix.onSubmitEnter()
+            } else {
+                TerminalScrollSupport.scrollToInputArea(shellWidget)
+                TerminalScrollSupport.scheduleScrollToInputArea(shellWidget)
+            }
+        }
+
         private const val BOTTOM_VALUE = 0
         private const val FOLLOW_CHECK_MS = 80L
         private const val USER_SCROLL_GRACE_MS = 350L

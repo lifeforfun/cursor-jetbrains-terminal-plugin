@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.github.cursorterm.cursor-cli-terminal</id>
     <name>Cursor CLI Terminal</name>
-    <version>1.8.7</version>
+    <version>1.8.18</version>
     <vendor>cursorterm</vendor>
 
     <description><![CDATA[
@@ -14,7 +14,8 @@
     <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow id="Cursor CLI Terminal"
+        <postStartupActivity implementation="com.github.cursorterm.EditorContextStartupActivity" />
+        <toolWindow id="com.github.cursorterm.agent"
             anchor="bottom"
             factoryClass="com.github.cursorterm.CursorTerminalToolWindowFactory"
             icon="/icons/cursor.svg" />

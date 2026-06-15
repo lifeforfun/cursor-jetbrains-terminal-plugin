@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.github.cursorterm"
-version = "1.8.7"
+version = "1.8.18"
 
 repositories {
     mavenCentral()
@@ -46,5 +46,20 @@ tasks {
     patchPluginXml {
         sinceBuild.set("233")
         untilBuild.set("999.*")
+    }
+
+    val verifyPluginZip by registering {
+        dependsOn("buildPlugin")
+        doLast {
+            val zip = layout.buildDirectory.file("distributions/cursor-cli-terminal-plugin-${version}.zip").get().asFile
+            check(zip.isFile) {
+                "Missing plugin distribution: ${zip.absolutePath}\nRun: ./gradlew buildPlugin"
+            }
+            logger.lifecycle("Plugin zip ready: ${zip.absolutePath} (${zip.length()} bytes)")
+        }
+    }
+
+    named("build") {
+        dependsOn(verifyPluginZip)
     }
 }
