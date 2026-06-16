@@ -12,7 +12,6 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.fileEditor.TextEditor
-import com.intellij.openapi.fileEditor.impl.EditorHistoryManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -44,19 +43,12 @@ object EditorContextCollector {
     private val lastReferenceByProject = ConcurrentHashMap<String, EditorReference>()
     private val installedProjects = ConcurrentHashMap.newKeySet<String>()
 
-    fun collect(project: Project): EditorReference? {
-        val cached = lastReferenceByProject[projectKey(project)]
-        val live = collectLive(project)
-        val merged = mergeReferences(cached, live) ?: return cached
-        remember(project, merged)
-        return merged
-    }
+    /** Enter 提交时采集：仅当前激活标签页，不回退缓存或其它 tab。 */
+    fun collect(project: Project): EditorReference? =
+        collectLive(project)?.also { remember(project, it) }
 
     fun snapshotActiveEditor(project: Project) {
-        val cached = lastReferenceByProject[projectKey(project)]
-        val live = collectLive(project) ?: return
-        val merged = mergeReferences(cached, live) ?: live
-        remember(project, merged)
+        collectLive(project)?.let { remember(project, it) }
     }
 
     fun installTracking(project: Project, parentDisposable: Disposable) {
@@ -112,38 +104,28 @@ object EditorContextCollector {
 
     private fun collectLive(project: Project): EditorReference? {
         val fileEditorManager = FileEditorManager.getInstance(project)
-        val resolved = resolveActiveEditor(fileEditorManager, project) ?: return null
-        val (editor, file) = resolved
-        if (!file.isValid || file.path.isBlank()) return null
-        return toReference(project, editor, file)
-    }
-
-    private fun mergeReferences(cached: EditorReference?, live: EditorReference?): EditorReference? {
-        when {
-            live == null -> return cached
-            cached == null -> return live
-            live.hasLineRange() -> return live
-            cached.hasLineRange() && sameFile(cached, live) ->
-                return live.copy(startLine = cached.startLine, endLine = cached.endLine)
-            cached.hasLineRange() && !live.hasLineRange() && sameFile(cached, live) -> return cached
-            cached.hasLineRange() && !live.hasLineRange() && !sameFile(cached, live) -> return cached
-            else -> return live
+        resolveActiveEditor(fileEditorManager, project)?.let { (editor, file) ->
+            if (!file.isValid || file.path.isBlank()) return null
+            return toReference(project, editor, file)
         }
+        return collectFromSelectedFileOnly(fileEditorManager, project)
     }
 
-    private fun sameFile(a: EditorReference, b: EditorReference): Boolean {
-        if (a.relativePath == b.relativePath) return true
-        return a.relativePath.endsWith("/${b.relativePath}") ||
-            b.relativePath.endsWith("/${a.relativePath}") ||
-            a.relativePath.substringAfterLast('/') == b.relativePath.substringAfterLast('/')
+    /** CSV/表格等非 TextEditor 标签页：无 Editor 时仍注入当前 tab 文件路径。 */
+    private fun collectFromSelectedFileOnly(
+        fileEditorManager: FileEditorManager,
+        project: Project,
+    ): EditorReference? {
+        val file = fileEditorManager.selectedFiles.firstOrNull() ?: return null
+        if (!file.isValid || file.path.isBlank()) return null
+        val path = toAtPath(project, file) ?: return null
+        return EditorReference(relativePath = path)
     }
 
     private fun rememberFromEditor(project: Project, editor: Editor, file: VirtualFile) {
         if (!file.isValid || file.path.isBlank()) return
         val incoming = toReference(project, editor, file) ?: return
-        val cached = lastReferenceByProject[projectKey(project)]
-        val merged = mergeReferences(cached, incoming) ?: incoming
-        remember(project, merged)
+        remember(project, incoming)
     }
 
     private fun remember(project: Project, reference: EditorReference) {
@@ -154,26 +136,27 @@ object EditorContextCollector {
         project.locationHash
 
     private fun toReference(project: Project, editor: Editor, file: VirtualFile): EditorReference? {
-        val relativePath = toRelativePath(project, file) ?: return null
+        val path = toAtPath(project, file) ?: return null
         val selection = editor.selectionModel
         if (selection.hasSelection()) {
             val startLine = editor.offsetToLogicalPosition(selection.selectionStart).line + 1
             val endLine = editor.offsetToLogicalPosition(selection.selectionEnd).line + 1
             return EditorReference(
-                relativePath = relativePath,
+                relativePath = path,
                 startLine = min(startLine, endLine),
                 endLine = max(startLine, endLine),
             )
         }
-        return EditorReference(relativePath = relativePath)
+        return EditorReference(relativePath = path)
     }
 
+    /**
+     * 解析当前激活标签页：优先 caret 所在编辑器，其次 selectedEditors / selectedFiles。
+     */
     private fun resolveActiveEditor(
         fileEditorManager: FileEditorManager,
-        project: Project,
+        @Suppress("UNUSED_PARAMETER") project: Project,
     ): Pair<Editor, VirtualFile>? {
-        findEditorWithSelection(project)?.let { return it }
-
         fileEditorManager.selectedTextEditor?.let { editor ->
             FileDocumentManager.getInstance().getFile(editor.document)?.let { file ->
                 return editor to file
@@ -188,35 +171,10 @@ object EditorContextCollector {
             return editor to file
         }
 
-        val historyFiles = EditorHistoryManager.getInstance(project).fileList
-        for (file in historyFiles) {
-            editorForFile(fileEditorManager, file)?.let { editor ->
-                if (editor.selectionModel.hasSelection()) {
-                    return editor to file
-                }
-            }
-        }
-
-        val file = fileEditorManager.selectedFiles.firstOrNull()
-            ?: historyFiles.firstOrNull()
-            ?: fileEditorManager.openFiles.lastOrNull()
-            ?: return null
-
+        val selectedFile = fileEditorManager.selectedFiles.firstOrNull()
+        val file = selectedFile ?: fileEditorManager.openFiles.lastOrNull() ?: return null
         val editor = editorForFile(fileEditorManager, file) ?: return null
         return editor to file
-    }
-
-    private fun findEditorWithSelection(project: Project): Pair<Editor, VirtualFile>? {
-        val documentManager = FileDocumentManager.getInstance()
-        return EditorFactory.getInstance().getAllEditors()
-            .asSequence()
-            .filter { editor ->
-                editor.project == project && !editor.isDisposed && editor.selectionModel.hasSelection()
-            }
-            .mapNotNull { editor ->
-                documentManager.getFile(editor.document)?.let { file -> editor to file }
-            }
-            .firstOrNull()
     }
 
     private fun editorForFile(fileEditorManager: FileEditorManager, file: VirtualFile): Editor? {
@@ -244,21 +202,38 @@ object EditorContextCollector {
     private fun extractEditor(fileEditor: FileEditor?): Editor? =
         (fileEditor as? TextEditor)?.editor
 
-    private fun toRelativePath(project: Project, file: VirtualFile): String? {
+    /**
+     * 项目内文件返回相对路径；项目外文件返回绝对路径（均用于 @ 引用）。
+     */
+    private fun toAtPath(project: Project, file: VirtualFile): String? {
+        val absolutePath = resolvePhysicalPath(file) ?: return null
+
         project.baseDir?.let { baseDir ->
             VfsUtilCore.getRelativePath(file, baseDir)
                 ?.takeIf { it.isNotBlank() && it != "." }
                 ?.let { return it.replace('\\', '/') }
         }
-        val basePath = project.basePath ?: return file.name.takeIf { it.isNotBlank() }
-        val normalizedBase = basePath.trimEnd('/', '\\')
-        val normalizedFile = file.path.trimEnd('/', '\\')
-        if (normalizedFile == normalizedBase) return null
-        val prefix = normalizedBase + java.io.File.separator
-        return when {
-            normalizedFile.startsWith(prefix) ->
-                normalizedFile.removePrefix(prefix).replace('\\', '/')
-            else -> file.name.replace('\\', '/')
+
+        val basePath = project.basePath?.trimEnd('/', '\\')?.replace('\\', '/')
+        if (basePath != null) {
+            if (absolutePath == basePath) return null
+            val prefix = "$basePath/"
+            if (absolutePath.startsWith(prefix)) {
+                return absolutePath.removePrefix(prefix)
+            }
+        }
+
+        return absolutePath
+    }
+
+    private fun resolvePhysicalPath(file: VirtualFile): String? {
+        return try {
+            VfsUtilCore.virtualToIoFile(file).absolutePath
+                .trimEnd('/', '\\')
+                .replace('\\', '/')
+                .takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            file.path.trimEnd('/', '\\').replace('\\', '/').takeIf { it.isNotBlank() }
         }
     }
 }

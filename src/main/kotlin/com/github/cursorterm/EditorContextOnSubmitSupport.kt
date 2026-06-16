@@ -141,7 +141,7 @@ class EditorContextOnSubmitSupport private constructor(
     }
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.18"
+        private const val PLUGIN_HOOK_VERSION = "1.8.23"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
 

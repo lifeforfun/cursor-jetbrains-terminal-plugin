@@ -42,7 +42,7 @@ class TerminalInputTracker(
     fun inputSnapshot(): InputSnapshot {
         val typed = resolveTypedCommand()
         return InputSnapshot(
-            hasUserInput = typed.isNotBlank(),
+            hasUserInput = typed.isNotBlank() || preEnterKeyPressCount > 0 || pastePending,
             typedCommandLength = typed.length,
             preEnterKeyPressCount = preEnterKeyPressCount,
         )
