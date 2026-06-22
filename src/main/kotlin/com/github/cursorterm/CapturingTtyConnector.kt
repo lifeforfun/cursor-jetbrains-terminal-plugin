@@ -20,16 +20,19 @@ class CapturingTtyConnector(
 
     fun currentLine(): String = lineBuffer.toString()
 
-    fun hasLineContinuationPending(): Boolean = lineContinuationPending
+    fun hasLineContinuationPending(): Boolean =
+        lineContinuationPending || lineEndsWithContinuation()
 
     fun consumeLineContinuation() {
         lineContinuationPending = false
-        if (lineBuffer.isNotEmpty()) {
-            when (lineBuffer.last()) {
-                '\\', '＼' -> lineBuffer.deleteCharAt(lineBuffer.length - 1)
-            }
-        }
     }
+
+    private fun lineEndsWithContinuation(): Boolean {
+        if (lineBuffer.isEmpty()) return false
+        return isLineContinuationChar(lineBuffer[lineBuffer.length - 1])
+    }
+
+    private fun isLineContinuationChar(ch: Char): Boolean = ch == '\\' || ch == '＼'
 
     fun clearLine() {
         lineBuffer.setLength(0)

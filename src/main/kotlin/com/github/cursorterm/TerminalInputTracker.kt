@@ -40,7 +40,7 @@ class TerminalInputTracker(
     fun hasUserInput(): Boolean = inputSnapshot().hasUserInput
 
     fun inputSnapshot(): InputSnapshot {
-        val typed = resolveTypedCommand()
+        val typed = resolveTypedCommand().trim()
         return InputSnapshot(
             hasUserInput = typed.isNotBlank() || preEnterKeyPressCount > 0 || pastePending,
             typedCommandLength = typed.length,
@@ -55,13 +55,19 @@ class TerminalInputTracker(
     }
 
     fun consumeLineContinuationEnter(): Boolean {
-        if (capturingConnector?.hasLineContinuationPending() == true) {
-            capturingConnector?.consumeLineContinuation()
-            return true
-        }
-        if (!lineContinuationPending) return false
+        if (!isLineContinuationActive()) return false
+        capturingConnector?.consumeLineContinuation()
         lineContinuationPending = false
         return true
+    }
+
+    fun isLineContinuationActive(): Boolean {
+        capturingConnector?.let { connector ->
+            if (connector.hasLineContinuationPending()) return true
+        }
+        return currentInputLine().trimEnd().let { line ->
+            line.endsWith("\\") || line.endsWith("＼")
+        }
     }
 
     fun onShiftEnter() {
@@ -172,15 +178,12 @@ class TerminalInputTracker(
         capturingConnector?.clearLine()
     }
 
-    private fun resolveTypedCommand(): String {
-        capturingConnector?.currentLine()?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    private fun resolveTypedCommand(): String = currentInputLine()
 
-        TtyConnectorCaptureSupport.shellTypedCommand(shellWidget).trim().takeIf { it.isNotBlank() }?.let { return it }
-
-        shadowInput.toString().trim().takeIf { it.isNotBlank() }?.let { return it }
-
-        if (pastePending || preEnterKeyPressCount > 0) return " "
-        return ""
+    private fun currentInputLine(): String {
+        capturingConnector?.currentLine()?.let { return it }
+        TtyConnectorCaptureSupport.shellTypedCommand(shellWidget).let { return it }
+        return shadowInput.toString()
     }
 
     private fun appendShadowChar(ch: Char) {
@@ -193,12 +196,11 @@ class TerminalInputTracker(
     private fun handleKeyPressed(event: KeyEvent) {
         when {
             event.keyCode == KeyEvent.VK_ENTER && event.isShiftDown -> onShiftEnter()
-            event.keyCode == KeyEvent.VK_BACK_SLASH && !hasModifiers(event) -> lineContinuationPending = true
             event.keyCode == KeyEvent.VK_BACK_SPACE -> {
                 if (shadowInput.isNotEmpty()) {
                     shadowInput.deleteCharAt(shadowInput.length - 1)
                 }
-                lineContinuationPending = false
+                lineContinuationPending = shadowInput.isNotEmpty() && isLineContinuationChar(shadowInput.last())
             }
             event.keyCode == KeyEvent.VK_DELETE -> lineContinuationPending = false
             event.isControlDown && event.keyCode == KeyEvent.VK_V -> pastePending = true

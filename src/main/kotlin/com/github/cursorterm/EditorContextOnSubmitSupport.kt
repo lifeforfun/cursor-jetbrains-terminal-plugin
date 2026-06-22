@@ -66,22 +66,23 @@ class EditorContextOnSubmitSupport private constructor(
     }
 
     private fun processSubmitEnter(event: KeyEvent) {
+        if (!SubmitEnterGate.tryProcess(event)) return
+
         if (isShiftEnter(event)) {
             inputTracker.onShiftEnter()
             return
         }
         if (!isSubmitEnter(event)) return
 
-        TerminalScrollFix.notifySubmitEnter(content, shellWidget)
-
         inputTracker.refreshPtyCapture()
+        if (inputTracker.consumeLineContinuationEnter()) return
+
+        TerminalScrollFix.notifySubmitEnter(content, shellWidget)
 
         val reference = EditorContextCollector.collect(project)
         val inputSnapshot = inputTracker.inputSnapshot()
         if (reference == null) return
         if (!inputSnapshot.hasUserInput) return
-        if (inputTracker.consumeLineContinuationEnter()) return
-        if (!EnterInjectGate.tryAcquire(event)) return
 
         val ref = reference.toAtNotation()
         val sent = TerminalSendSupport.sendString(shellWidget, "${System.lineSeparator()}$ref")
@@ -119,29 +120,23 @@ class EditorContextOnSubmitSupport private constructor(
     private fun hasSubmitModifiers(event: KeyEvent): Boolean =
         event.isShiftDown || event.isControlDown || event.isAltDown || event.isMetaDown
 
-    private object EnterInjectGate {
+    /** 同一物理 Enter 只处理一次，避免 preKey + dispatcher 双触发。 */
+    private object SubmitEnterGate {
         @Volatile
-        private var lastInjectedEnterWhen = Long.MIN_VALUE
+        private var lastProcessedEnterWhen = Long.MIN_VALUE
 
-        @Volatile
-        private var lastInjectAtMs = 0L
-
-        fun tryAcquire(event: KeyEvent): Boolean {
+        fun tryProcess(event: KeyEvent): Boolean {
             val enterWhen = event.`when`
-            val now = System.currentTimeMillis()
             synchronized(this) {
-                if (now - lastInjectAtMs < 300 || enterWhen == lastInjectedEnterWhen) {
-                    return false
-                }
-                lastInjectedEnterWhen = enterWhen
-                lastInjectAtMs = now
+                if (enterWhen == lastProcessedEnterWhen) return false
+                lastProcessedEnterWhen = enterWhen
                 return true
             }
         }
     }
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.23"
+        private const val PLUGIN_HOOK_VERSION = "1.8.26"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
 
