@@ -368,6 +368,10 @@ class TerminalScrollFix(
     companion object {
         private val SCROLL_FIX_KEY = Key.create<TerminalScrollFix>("cursorterm.scrollFix")
 
+        fun clearForRestart(content: Content) {
+            content.putUserData(SCROLL_FIX_KEY, null)
+        }
+
         fun installOn(content: Content, shellWidget: ShellTerminalWidget, parentDisposable: Disposable): TerminalScrollFix? {
             return try {
                 TerminalScrollFix(shellWidget, parentDisposable).also { fix ->

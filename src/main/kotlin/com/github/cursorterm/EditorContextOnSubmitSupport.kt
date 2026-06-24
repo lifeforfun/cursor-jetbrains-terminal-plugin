@@ -136,9 +136,15 @@ class EditorContextOnSubmitSupport private constructor(
     }
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.26"
+        private const val PLUGIN_HOOK_VERSION = "1.8.28"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
+
+        fun resetForRestart(content: Content) {
+            content.getUserData(INSTALLATION)?.let { Disposer.dispose(it) }
+            content.putUserData(INSTALLATION, null)
+            content.putUserData(INSTALLED_VERSION, null)
+        }
 
         fun installOnce(project: Project, shellWidget: ShellTerminalWidget, content: Content) {
             if (content.getUserData(INSTALLED_VERSION) == PLUGIN_HOOK_VERSION) return

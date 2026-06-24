@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.github.cursorterm"
-version = "1.8.26"
+version = "1.8.28"
 
 repositories {
     mavenCentral()
