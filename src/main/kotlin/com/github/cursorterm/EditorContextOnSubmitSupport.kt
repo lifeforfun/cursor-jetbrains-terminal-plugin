@@ -13,7 +13,7 @@ import java.awt.event.MouseEvent
 import java.util.function.Consumer
 
 /**
- * Enter 提交：PreKey 阶段同行追加 @，由 JediTerm 原生 Enter 完成提交（与 1.8.9 一致）。
+ * Enter 提交：PreKey 同行追加 @，再主动发送 Enter 完成提交（agent 输出时 native Enter 常被吞）。
  */
 class EditorContextOnSubmitSupport private constructor(
     private val project: Project,
@@ -66,10 +66,14 @@ class EditorContextOnSubmitSupport private constructor(
 
         val ref = reference.toAtNotation()
         val line = inputTracker.inputLine()
-        if (line.contains(ref)) return
-
         val starter = shellWidget.terminalStarter ?: return
-        starter.sendString(" $ref", true)
+        val needsInject = !line.contains(ref)
+
+        if (needsInject) {
+            starter.sendString(" $ref", true)
+        }
+        starter.sendBytes(byteArrayOf('\n'.code.toByte()), true)
+        event.consume()
 
         ApplicationManager.getApplication().invokeLater {
             inputTracker.reset()
@@ -112,7 +116,7 @@ class EditorContextOnSubmitSupport private constructor(
     }
 
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.34"
+        private const val PLUGIN_HOOK_VERSION = "1.8.35"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
         private val SHELL_WIDGET = Key.create<ShellTerminalWidget>("cursorterm.editorContextOnSubmit.shellWidget")

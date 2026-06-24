@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.github.cursorterm.cursor-cli-terminal</id>
     <name>Cursor CLI Terminal</name>
-    <version>1.8.34</version>
+    <version>1.8.35</version>
     <vendor>cursorterm</vendor>
 
     <description><![CDATA[

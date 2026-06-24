@@ -42,9 +42,10 @@ class TerminalInputTracker(
     fun inputSnapshot(): InputSnapshot {
         val typed = resolveTypedCommand().trim()
         return InputSnapshot(
-            hasUserInput = typed.isNotBlank() || preEnterKeyPressCount > 0 || pastePending,
+            hasUserInput = typed.isNotBlank() || preEnterKeyPressCount > 0 || pastePending || shadowInput.isNotEmpty(),
             typedCommandLength = typed.length,
             preEnterKeyPressCount = preEnterKeyPressCount,
+            shellLine = typed,
         )
     }
 
@@ -184,8 +185,9 @@ class TerminalInputTracker(
     private fun resolveTypedCommand(): String = currentInputLine()
 
     private fun currentInputLine(): String {
-        capturingConnector?.currentLine()?.let { return it }
-        TtyConnectorCaptureSupport.shellTypedCommand(shellWidget).let { return it }
+        val shellLine = TtyConnectorCaptureSupport.shellTypedCommand(shellWidget).trim()
+        if (shellLine.isNotEmpty()) return shellLine
+        capturingConnector?.currentLine()?.let { if (it.isNotEmpty()) return it }
         return shadowInput.toString()
     }
 
@@ -247,6 +249,7 @@ class TerminalInputTracker(
         val hasUserInput: Boolean,
         val typedCommandLength: Int,
         val preEnterKeyPressCount: Int,
+        val shellLine: String = "",
     )
 
     companion object {
