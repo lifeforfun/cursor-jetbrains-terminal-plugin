@@ -13,7 +13,8 @@ import java.awt.event.MouseEvent
 import java.util.function.Consumer
 
 /**
- * Enter 提交：PreKey 同行追加 @，再主动发送 Enter 完成提交（agent 输出时 native Enter 常被吞）。
+ * Enter 提交：PreKey 注入 @，不 consume，让同一按键的原生 Enter 提交。
+ * Esc 取消：PreKey 转发 0x1B 到 PTY 并 consume，避免 IDE 拦截。
  */
 class EditorContextOnSubmitSupport private constructor(
     private val project: Project,
@@ -31,6 +32,8 @@ class EditorContextOnSubmitSupport private constructor(
         inputTracker.handlePreKeyEvent(event)
         if (event.id != KeyEvent.KEY_PRESSED) return@Consumer
         if (event.isConsumed) return@Consumer
+        processEscape(event)
+        if (event.isConsumed) return@Consumer
         processSubmitEnter(event)
     }
 
@@ -44,6 +47,18 @@ class EditorContextOnSubmitSupport private constructor(
             active = false
             TerminalPreKeySupport.removeHandler(panel, preKeyHandler)
         }
+    }
+
+    private fun processEscape(event: KeyEvent) {
+        if (event.keyCode != KeyEvent.VK_ESCAPE) return
+        if (!EscapeGate.tryProcess(event)) return
+
+        inputTracker.refreshPtyCapture()
+        val starter = shellWidget.terminalStarter ?: return
+
+        starter.sendBytes(byteArrayOf(ESCAPE_BYTE), true)
+        inputTracker.reset()
+        event.consume()
     }
 
     private fun processSubmitEnter(event: KeyEvent) {
@@ -61,22 +76,25 @@ class EditorContextOnSubmitSupport private constructor(
         TerminalScrollFix.notifySubmitEnter(content, shellWidget)
 
         val reference = EditorContextCollector.collect(project) ?: return
-        val inputSnapshot = inputTracker.inputSnapshot()
-        if (!inputSnapshot.hasUserInput) return
+        if (!inputTracker.inputSnapshot().hasUserInput) return
 
         val ref = reference.toAtNotation()
         val line = inputTracker.inputLine()
-        val starter = shellWidget.terminalStarter ?: return
-        val needsInject = !line.contains(ref)
-
-        if (needsInject) {
-            starter.sendString(" $ref", true)
+        if (line.contains(ref)) {
+            scheduleResetAfterNativeSubmit()
+            return
         }
-        starter.sendBytes(byteArrayOf('\n'.code.toByte()), true)
-        event.consume()
 
+        val starter = shellWidget.terminalStarter ?: return
+        starter.sendString(" $ref", true)
+        scheduleResetAfterNativeSubmit()
+    }
+
+    private fun scheduleResetAfterNativeSubmit() {
         ApplicationManager.getApplication().invokeLater {
-            inputTracker.reset()
+            ApplicationManager.getApplication().invokeLater {
+                inputTracker.reset()
+            }
         }
     }
 
@@ -115,8 +133,23 @@ class EditorContextOnSubmitSupport private constructor(
         }
     }
 
+    private object EscapeGate {
+        @Volatile
+        private var lastProcessedEscapeWhen = Long.MIN_VALUE
+
+        fun tryProcess(event: KeyEvent): Boolean {
+            val escapeWhen = event.`when`
+            synchronized(this) {
+                if (escapeWhen == lastProcessedEscapeWhen) return false
+                lastProcessedEscapeWhen = escapeWhen
+                return true
+            }
+        }
+    }
+
     companion object {
-        private const val PLUGIN_HOOK_VERSION = "1.8.35"
+        private const val ESCAPE_BYTE: Byte = 0x1B
+        private const val PLUGIN_HOOK_VERSION = "1.8.39"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
         private val SHELL_WIDGET = Key.create<ShellTerminalWidget>("cursorterm.editorContextOnSubmit.shellWidget")
