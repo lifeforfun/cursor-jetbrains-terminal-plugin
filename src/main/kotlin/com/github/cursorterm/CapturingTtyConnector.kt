@@ -82,7 +82,12 @@ class CapturingTtyConnector(
     }
 
     private fun captureBytes(bytes: ByteArray) {
-        if (bytes.isEmpty() || bytes[0] == ESC) return
+        if (bytes.isEmpty()) return
+        if (bytes.size == 1 && bytes[0] == ESC) {
+            clearLine()
+            return
+        }
+        if (bytes[0] == ESC) return
 
         val text = bytes.toString(StandardCharsets.UTF_8)
         for (ch in text) {

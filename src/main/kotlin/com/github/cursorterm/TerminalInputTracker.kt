@@ -78,6 +78,9 @@ class TerminalInputTracker(
         clearTrackedInput()
     }
 
+    /** 当前 PTY/终端缓冲中的输入行（用于去重 @ 注入）。 */
+    fun inputLine(): String = currentInputLine()
+
     fun handlePreKeyEvent(event: KeyEvent) {
         when (event.id) {
             KeyEvent.KEY_TYPED -> appendShadowChar(event.keyChar)
@@ -203,6 +206,7 @@ class TerminalInputTracker(
                 lineContinuationPending = shadowInput.isNotEmpty() && isLineContinuationChar(shadowInput.last())
             }
             event.keyCode == KeyEvent.VK_DELETE -> lineContinuationPending = false
+            event.keyCode == KeyEvent.VK_ESCAPE -> clearTrackedInput()
             event.isControlDown && event.keyCode == KeyEvent.VK_V -> pastePending = true
             event.isControlDown && event.keyCode in CLEAR_BUFFER_KEYS -> clearTrackedInput()
         }

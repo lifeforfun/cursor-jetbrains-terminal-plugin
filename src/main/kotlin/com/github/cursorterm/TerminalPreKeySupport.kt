@@ -12,6 +12,30 @@ internal object TerminalPreKeySupport {
         }
     }
 
+    fun removeHandler(panel: Any, handler: Consumer<KeyEvent>) {
+        for (fieldName in PRE_KEY_FIELD_NAMES) {
+            try {
+                val field = panel.javaClass.getDeclaredField(fieldName)
+                field.isAccessible = true
+                @Suppress("UNCHECKED_CAST")
+                when (val value = field.get(panel)) {
+                    is MutableList<*> -> {
+                        (value as MutableList<Consumer<KeyEvent>>).remove(handler)
+                        return
+                    }
+                }
+            } catch (_: Exception) {
+                // try next field
+            }
+        }
+        try {
+            val method = panel.javaClass.getMethod("removePreKeyEventHandler", Consumer::class.java)
+            method.invoke(panel, handler)
+        } catch (_: Exception) {
+            // optional API
+        }
+    }
+
     private fun prependHandler(panel: Any, handler: Consumer<KeyEvent>): Boolean {
         for (fieldName in PRE_KEY_FIELD_NAMES) {
             try {
