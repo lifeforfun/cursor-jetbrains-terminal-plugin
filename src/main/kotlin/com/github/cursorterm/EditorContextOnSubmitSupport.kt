@@ -86,7 +86,7 @@ class EditorContextOnSubmitSupport private constructor(
         }
 
         val starter = shellWidget.terminalStarter ?: return
-        starter.sendString(" $ref", true)
+        starter.sendString("\n$ref", true)
         scheduleResetAfterNativeSubmit()
     }
 
