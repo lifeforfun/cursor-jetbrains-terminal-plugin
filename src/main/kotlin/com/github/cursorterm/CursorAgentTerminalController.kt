@@ -48,7 +48,9 @@ class CursorAgentTerminalController(
     }
 
     fun startInitialSession() {
+        if (hasLiveSession()) return
         ApplicationManager.getApplication().invokeLater {
+            if (hasLiveSession()) return@invokeLater
             startSession(TerminalLauncher.SessionMode.RESUME_LAST)
         }
     }
@@ -70,6 +72,11 @@ class CursorAgentTerminalController(
         }
     }
 
+    private fun hasLiveSession(): Boolean {
+        val disposable = sessionDisposable ?: return false
+        return !Disposer.isDisposed(disposable) && shellWidget != null && terminalComponent != null
+    }
+
     private fun stopCurrentSession() {
         sessionDisposable?.let { Disposer.dispose(it) }
         sessionDisposable = null
@@ -83,6 +90,15 @@ class CursorAgentTerminalController(
     }
 
     private fun startSession(mode: TerminalLauncher.SessionMode) {
+        if (hasLiveSession()) {
+            stopCurrentSession()
+        }
+
+        val launchSpec = TerminalLauncher.buildLaunchSpec(project, mode)
+        launchSpec.resumedSessionId?.let { sessionId ->
+            CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
+        }
+
         val disposable = Disposer.newDisposable("CursorAgentTerminalSession")
         Disposer.register(content, disposable)
         sessionDisposable = disposable
@@ -91,7 +107,7 @@ class CursorAgentTerminalController(
             val runner = LocalTerminalDirectRunner.createTerminalRunner(project)
             val options = ShellStartupOptions.Builder()
                 .workingDirectory(projectDir)
-                .shellCommand(TerminalLauncher.buildShellCommand(project, mode))
+                .shellCommand(launchSpec.shellCommand)
                 .build()
 
             val terminalWidget = TerminalWidgetStartSupport.start(runner, disposable, options)

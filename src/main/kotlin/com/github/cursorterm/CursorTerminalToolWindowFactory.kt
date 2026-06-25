@@ -15,6 +15,10 @@ class CursorTerminalToolWindowFactory : ToolWindowFactory {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val contentManager = toolWindow.contentManager
+        if (contentManager.contentCount > 0) {
+            return
+        }
+
         val projectDir = project.basePath ?: System.getProperty("user.home")
 
         val panel = JPanel(BorderLayout())

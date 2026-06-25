@@ -12,6 +12,11 @@ object TerminalLauncher {
         NEW_CHAT,
     }
 
+    data class LaunchSpec(
+        val shellCommand: List<String>,
+        val resumedSessionId: String?,
+    )
+
     /**
      * 通过 login shell 启动 cursor-agent。
      *
@@ -19,18 +24,28 @@ object TerminalLauncher {
      * 插件若直接 shellCommand(["cursor-agent"])，子进程 PATH 被 IDE 裁成 /usr/bin:/bin:...，
      * 脚本内找不到 `cursor` 命令而失败。普通终端标签页先起 zsh 加载 profile，所以手动输入正常。
      */
-    fun buildShellCommand(project: Project, mode: SessionMode = SessionMode.RESUME_LAST): List<String> {
+    fun buildLaunchSpec(project: Project, mode: SessionMode = SessionMode.RESUME_LAST): LaunchSpec {
         val shell = System.getenv("SHELL")?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
-        return listOf(shell, "-lc", buildLaunchCommand(project, mode))
+        val resumedSessionId = if (mode == SessionMode.RESUME_LAST) {
+            CursorAgentSessionStore.findLastSessionId(project.basePath)
+        } else {
+            null
+        }
+        val launchCommand = buildLaunchCommand(resumedSessionId)
+        return LaunchSpec(
+            shellCommand = listOf(shell, "-lc", launchCommand),
+            resumedSessionId = resumedSessionId,
+        )
     }
 
-    fun buildLaunchCommand(project: Project, mode: SessionMode = SessionMode.RESUME_LAST): String {
+    fun buildShellCommand(project: Project, mode: SessionMode = SessionMode.RESUME_LAST): List<String> =
+        buildLaunchSpec(project, mode).shellCommand
+
+    private fun buildLaunchCommand(resumedSessionId: String?): String {
         val executable = agentExecutable()
         val parts = mutableListOf("exec", shellQuote(executable))
-        if (mode == SessionMode.RESUME_LAST) {
-            CursorAgentSessionStore.findLastSessionId(project.basePath)?.let { sessionId ->
-                parts += listOf("--resume", shellQuote(sessionId))
-            }
+        if (!resumedSessionId.isNullOrBlank()) {
+            parts += listOf("--resume", shellQuote(resumedSessionId))
         }
         return parts.joinToString(" ")
     }
