@@ -4,7 +4,9 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.ui.content.Content
+import com.intellij.util.Alarm
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellStartupOptions
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
@@ -36,6 +38,9 @@ class CursorAgentTerminalController(
     @Volatile
     private var starting = false
 
+    @Volatile
+    private var startingInitial = false
+
     private var newChatButton: JButton? = null
 
     fun createToolbar(): JPanel {
@@ -47,16 +52,40 @@ class CursorAgentTerminalController(
         return toolbar
     }
 
+    fun startInitialSessionIfNeeded() {
+        startInitialSession()
+    }
+
     fun startInitialSession() {
-        if (hasLiveSession()) return
+        if (hasLiveSession() || starting || startingInitial) {
+            // #region agent log
+            DebugLog.write(
+                hypothesisId = "H-START",
+                location = "CursorAgentTerminalController.startInitialSession",
+                message = "skipped",
+                data = mapOf(
+                    "hasLive" to hasLiveSession(),
+                    "starting" to starting,
+                    "startingInitial" to startingInitial,
+                ),
+            )
+            // #endregion
+            return
+        }
+        startingInitial = true
         ApplicationManager.getApplication().invokeLater {
-            if (hasLiveSession()) return@invokeLater
-            startSession(TerminalLauncher.SessionMode.RESUME_LAST)
+            try {
+                if (!hasLiveSession() && !starting) {
+                    startSession(TerminalLauncher.SessionMode.RESUME_LAST)
+                }
+            } finally {
+                startingInitial = false
+            }
         }
     }
 
     fun startNewConversation() {
-        if (starting) return
+        if (starting || startingInitial) return
         starting = true
         newChatButton?.isEnabled = false
         CursorAgentSessionStore.invalidateCache(project.basePath)
@@ -99,6 +128,19 @@ class CursorAgentTerminalController(
             CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
         }
 
+        // #region agent log
+        DebugLog.write(
+            hypothesisId = "H-START",
+            location = "CursorAgentTerminalController.startSession",
+            message = "launch",
+            data = mapOf(
+                "mode" to mode.name,
+                "resumedSessionId" to launchSpec.resumedSessionId,
+                "command" to launchSpec.shellCommand.lastOrNull(),
+            ),
+        )
+        // #endregion
+
         val disposable = Disposer.newDisposable("CursorAgentTerminalSession")
         Disposer.register(content, disposable)
         sessionDisposable = disposable
@@ -127,12 +169,28 @@ class CursorAgentTerminalController(
             } catch (_: Exception) {
                 // 可选功能
             }
+
+            scheduleSessionDiscovery(disposable)
         } catch (e: Exception) {
             Disposer.dispose(disposable)
             sessionDisposable = null
             shellWidget = null
             terminalComponent = null
             showStartFailure(e)
+        }
+    }
+
+    private fun scheduleSessionDiscovery(parentDisposable: Disposable) {
+        val alarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, parentDisposable)
+        listOf(1_000, 3_000, 8_000).forEach { delayMs ->
+            alarm.addRequest({
+                ApplicationManager.getApplication().invokeLater {
+                    if (!hasLiveSession()) return@invokeLater
+                    CursorAgentSessionStore.discoverLatestSession(project.basePath)?.let { sessionId ->
+                        CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
+                    }
+                }
+            }, delayMs)
         }
     }
 
@@ -146,5 +204,10 @@ class CursorAgentTerminalController(
         )
         panel.revalidate()
         panel.repaint()
+    }
+
+    companion object {
+        val CONTROLLER_KEY: Key<CursorAgentTerminalController> =
+            Key.create("cursorterm.agentTerminalController")
     }
 }

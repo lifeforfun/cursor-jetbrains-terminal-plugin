@@ -14,19 +14,24 @@ object CursorAgentSessionStore {
     private val homeDir: Path
         get() = Path.of(System.getProperty("user.home"))
 
-    /** 仅缓存非 null 的扫描结果，避免把「尚未写入 meta」误判缓存 30s。 */
     private val cache = ConcurrentHashMap<String, CachedSession>()
-
-    /** 当前工具窗终端实际使用的会话，优先于磁盘扫描。 */
     private val activeSession = ConcurrentHashMap<String, String>()
 
     fun findLastSessionId(projectPath: String?): String? {
         if (projectPath.isNullOrBlank()) return null
         val workspaceHash = md5Hex(normalizePath(projectPath))
-        val chatsRoot = homeDir.resolve(".cursor/chats").resolve(workspaceHash)
+        val chatsRoot = chatsRoot(workspaceHash)
 
         activeSession[workspaceHash]?.let { remembered ->
-            if (sessionHasConversation(chatsRoot, remembered)) {
+            if (sessionExists(chatsRoot, remembered)) {
+                // #region agent log
+                DebugLog.write(
+                    hypothesisId = "H-SESS",
+                    location = "CursorAgentSessionStore.findLastSessionId",
+                    message = "from active",
+                    data = mapOf("sessionId" to remembered),
+                )
+                // #endregion
                 return remembered
             }
             activeSession.remove(workspaceHash)
@@ -34,8 +39,16 @@ object CursorAgentSessionStore {
 
         cache[workspaceHash]?.let { cached ->
             if (System.currentTimeMillis() - cached.cachedAtMs < CACHE_TTL_MS) {
-                if (sessionHasConversation(chatsRoot, cached.sessionId)) {
+                if (sessionExists(chatsRoot, cached.sessionId)) {
                     activeSession[workspaceHash] = cached.sessionId
+                    // #region agent log
+                    DebugLog.write(
+                        hypothesisId = "H-SESS",
+                        location = "CursorAgentSessionStore.findLastSessionId",
+                        message = "from cache",
+                        data = mapOf("sessionId" to cached.sessionId),
+                    )
+                    // #endregion
                     return cached.sessionId
                 }
                 cache.remove(workspaceHash)
@@ -47,12 +60,28 @@ object CursorAgentSessionStore {
             cache[workspaceHash] = CachedSession(sessionId, System.currentTimeMillis())
             activeSession[workspaceHash] = sessionId
         }
+        // #region agent log
+        DebugLog.write(
+            hypothesisId = "H-SESS",
+            location = "CursorAgentSessionStore.findLastSessionId",
+            message = "from scan",
+            data = mapOf("sessionId" to sessionId),
+        )
+        // #endregion
         return sessionId
     }
 
     fun recordActiveSession(projectPath: String?, sessionId: String?) {
         if (projectPath.isNullOrBlank() || sessionId.isNullOrBlank()) return
         activeSession[md5Hex(normalizePath(projectPath))] = sessionId
+        // #region agent log
+        DebugLog.write(
+            hypothesisId = "H-SESS",
+            location = "CursorAgentSessionStore.recordActiveSession",
+            message = "recorded",
+            data = mapOf("sessionId" to sessionId),
+        )
+        // #endregion
     }
 
     fun invalidateCache(projectPath: String?) {
@@ -60,7 +89,35 @@ object CursorAgentSessionStore {
         val workspaceHash = md5Hex(normalizePath(projectPath))
         cache.remove(workspaceHash)
         activeSession.remove(workspaceHash)
+        // #region agent log
+        DebugLog.write(
+            hypothesisId = "H-SESS",
+            location = "CursorAgentSessionStore.invalidateCache",
+            message = "invalidated",
+            data = emptyMap(),
+        )
+        // #endregion
     }
+
+    fun discoverLatestSession(projectPath: String?): String? {
+        if (projectPath.isNullOrBlank()) return null
+        val workspaceHash = md5Hex(normalizePath(projectPath))
+        val sessionId = findLastSessionIdUncached(chatsRoot(workspaceHash)) ?: return null
+        cache[workspaceHash] = CachedSession(sessionId, System.currentTimeMillis())
+        activeSession[workspaceHash] = sessionId
+        // #region agent log
+        DebugLog.write(
+            hypothesisId = "H-SESS2",
+            location = "CursorAgentSessionStore.discoverLatestSession",
+            message = "discovered",
+            data = mapOf("sessionId" to sessionId),
+        )
+        // #endregion
+        return sessionId
+    }
+
+    private fun chatsRoot(workspaceHash: String): Path =
+        homeDir.resolve(".cursor/chats").resolve(workspaceHash)
 
     private fun findLastSessionIdUncached(chatsRoot: Path): String? {
         if (!Files.isDirectory(chatsRoot)) return null
@@ -90,10 +147,8 @@ object CursorAgentSessionStore {
         return bestId
     }
 
-    private fun sessionHasConversation(chatsRoot: Path, sessionId: String): Boolean {
-        val meta = readMeta(chatsRoot.resolve(sessionId)) ?: return false
-        return meta.hasConversation
-    }
+    private fun sessionExists(chatsRoot: Path, sessionId: String): Boolean =
+        Files.isDirectory(chatsRoot.resolve(sessionId))
 
     private data class CachedSession(
         val sessionId: String,
