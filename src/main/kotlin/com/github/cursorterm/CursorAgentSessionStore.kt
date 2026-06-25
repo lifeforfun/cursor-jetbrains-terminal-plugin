@@ -24,14 +24,6 @@ object CursorAgentSessionStore {
 
         activeSession[workspaceHash]?.let { remembered ->
             if (sessionExists(chatsRoot, remembered)) {
-                // #region agent log
-                DebugLog.write(
-                    hypothesisId = "H-SESS",
-                    location = "CursorAgentSessionStore.findLastSessionId",
-                    message = "from active",
-                    data = mapOf("sessionId" to remembered),
-                )
-                // #endregion
                 return remembered
             }
             activeSession.remove(workspaceHash)
@@ -41,14 +33,6 @@ object CursorAgentSessionStore {
             if (System.currentTimeMillis() - cached.cachedAtMs < CACHE_TTL_MS) {
                 if (sessionExists(chatsRoot, cached.sessionId)) {
                     activeSession[workspaceHash] = cached.sessionId
-                    // #region agent log
-                    DebugLog.write(
-                        hypothesisId = "H-SESS",
-                        location = "CursorAgentSessionStore.findLastSessionId",
-                        message = "from cache",
-                        data = mapOf("sessionId" to cached.sessionId),
-                    )
-                    // #endregion
                     return cached.sessionId
                 }
                 cache.remove(workspaceHash)
@@ -60,28 +44,12 @@ object CursorAgentSessionStore {
             cache[workspaceHash] = CachedSession(sessionId, System.currentTimeMillis())
             activeSession[workspaceHash] = sessionId
         }
-        // #region agent log
-        DebugLog.write(
-            hypothesisId = "H-SESS",
-            location = "CursorAgentSessionStore.findLastSessionId",
-            message = "from scan",
-            data = mapOf("sessionId" to sessionId),
-        )
-        // #endregion
         return sessionId
     }
 
     fun recordActiveSession(projectPath: String?, sessionId: String?) {
         if (projectPath.isNullOrBlank() || sessionId.isNullOrBlank()) return
         activeSession[md5Hex(normalizePath(projectPath))] = sessionId
-        // #region agent log
-        DebugLog.write(
-            hypothesisId = "H-SESS",
-            location = "CursorAgentSessionStore.recordActiveSession",
-            message = "recorded",
-            data = mapOf("sessionId" to sessionId),
-        )
-        // #endregion
     }
 
     fun invalidateCache(projectPath: String?) {
@@ -89,14 +57,6 @@ object CursorAgentSessionStore {
         val workspaceHash = md5Hex(normalizePath(projectPath))
         cache.remove(workspaceHash)
         activeSession.remove(workspaceHash)
-        // #region agent log
-        DebugLog.write(
-            hypothesisId = "H-SESS",
-            location = "CursorAgentSessionStore.invalidateCache",
-            message = "invalidated",
-            data = emptyMap(),
-        )
-        // #endregion
     }
 
     fun discoverLatestSession(projectPath: String?): String? {
@@ -105,14 +65,6 @@ object CursorAgentSessionStore {
         val sessionId = findLastSessionIdUncached(chatsRoot(workspaceHash)) ?: return null
         cache[workspaceHash] = CachedSession(sessionId, System.currentTimeMillis())
         activeSession[workspaceHash] = sessionId
-        // #region agent log
-        DebugLog.write(
-            hypothesisId = "H-SESS2",
-            location = "CursorAgentSessionStore.discoverLatestSession",
-            message = "discovered",
-            data = mapOf("sessionId" to sessionId),
-        )
-        // #endregion
         return sessionId
     }
 

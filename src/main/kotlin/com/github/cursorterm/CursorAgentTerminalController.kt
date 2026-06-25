@@ -58,18 +58,6 @@ class CursorAgentTerminalController(
 
     fun startInitialSession() {
         if (hasLiveSession() || starting || startingInitial) {
-            // #region agent log
-            DebugLog.write(
-                hypothesisId = "H-START",
-                location = "CursorAgentTerminalController.startInitialSession",
-                message = "skipped",
-                data = mapOf(
-                    "hasLive" to hasLiveSession(),
-                    "starting" to starting,
-                    "startingInitial" to startingInitial,
-                ),
-            )
-            // #endregion
             return
         }
         startingInitial = true
@@ -127,19 +115,6 @@ class CursorAgentTerminalController(
         launchSpec.resumedSessionId?.let { sessionId ->
             CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
         }
-
-        // #region agent log
-        DebugLog.write(
-            hypothesisId = "H-START",
-            location = "CursorAgentTerminalController.startSession",
-            message = "launch",
-            data = mapOf(
-                "mode" to mode.name,
-                "resumedSessionId" to launchSpec.resumedSessionId,
-                "command" to launchSpec.shellCommand.lastOrNull(),
-            ),
-        )
-        // #endregion
 
         val disposable = Disposer.newDisposable("CursorAgentTerminalSession")
         Disposer.register(content, disposable)

@@ -18,17 +18,6 @@ class CursorTerminalToolWindowFactory : ToolWindowFactory {
         if (contentManager.contentCount > 0) {
             val existing = contentManager.getContent(0)
             val controller = existing?.getUserData(CursorAgentTerminalController.CONTROLLER_KEY)
-            // #region agent log
-            DebugLog.write(
-                hypothesisId = "H-TW",
-                location = "CursorTerminalToolWindowFactory.createToolWindowContent",
-                message = "reuse content",
-                data = mapOf(
-                    "hasController" to (controller != null),
-                    "contentCount" to contentManager.contentCount,
-                ),
-            )
-            // #endregion
             controller?.startInitialSessionIfNeeded()
             return
         }
