@@ -109,6 +109,9 @@ class TerminalScrollFix(
             if (event.scrollType != MouseWheelEvent.WHEEL_UNIT_SCROLL || event.isShiftDown) {
                 return@MouseWheelListener
             }
+            if (TerminalSelectionAccess.shouldDeferCustomScroll(terminalPanel)) {
+                return@MouseWheelListener
+            }
             val units = event.unitsToScroll
             if (units != 0) {
                 ensureHistoryScrollingEnabled()

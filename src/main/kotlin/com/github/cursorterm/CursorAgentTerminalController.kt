@@ -144,6 +144,11 @@ class CursorAgentTerminalController(
             } catch (_: Exception) {
                 // 可选功能
             }
+            try {
+                TerminalShiftSelectionSupport(widget.terminalPanel, disposable).install()
+            } catch (_: Exception) {
+                // 可选功能
+            }
 
             scheduleSessionDiscovery(disposable)
         } catch (e: Exception) {
