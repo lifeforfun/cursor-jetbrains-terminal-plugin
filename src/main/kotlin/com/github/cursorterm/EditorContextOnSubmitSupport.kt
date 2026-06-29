@@ -86,8 +86,23 @@ class EditorContextOnSubmitSupport private constructor(
         }
 
         val starter = shellWidget.terminalStarter ?: return
-        starter.sendString("\n$ref", true)
+        appendContextRef(starter, ref)
         scheduleResetAfterNativeSubmit()
+    }
+
+    /** 先静默移到输入末尾，再换行追加 @，避免光标在中间时插入到文字中间。 */
+    private fun appendContextRef(starter: com.jediterm.terminal.TerminalStarter, ref: String) {
+        moveInputCursorToEnd(starter)
+        starter.sendString("\n$ref", true)
+    }
+
+    private fun moveInputCursorToEnd(starter: com.jediterm.terminal.TerminalStarter) {
+        // 多行输入（含 \ 续行）：尽量落到最后一行
+        repeat(INPUT_END_DOWN_STEPS) {
+            starter.sendBytes(DOWN_ARROW, false)
+        }
+        // readline 行末；userTyping=false 避免 0x05 在 TUI 里显示乱码
+        starter.sendBytes(byteArrayOf(CTRL_E), false)
     }
 
     private fun scheduleResetAfterNativeSubmit() {
@@ -149,7 +164,10 @@ class EditorContextOnSubmitSupport private constructor(
 
     companion object {
         private const val ESCAPE_BYTE: Byte = 0x1B
-        private const val PLUGIN_HOOK_VERSION = "1.8.39"
+        private const val CTRL_E: Byte = 0x05
+        private const val INPUT_END_DOWN_STEPS = 32
+        private val DOWN_ARROW = byteArrayOf(0x1b, '['.code.toByte(), 'B'.code.toByte())
+        private const val PLUGIN_HOOK_VERSION = "1.8.54"
         private val INSTALLED_VERSION = Key.create<String>("cursorterm.editorContextOnSubmit.version")
         private val INSTALLATION = Key.create<Disposable>("cursorterm.editorContextOnSubmit.installation")
         private val SHELL_WIDGET = Key.create<ShellTerminalWidget>("cursorterm.editorContextOnSubmit.shellWidget")
