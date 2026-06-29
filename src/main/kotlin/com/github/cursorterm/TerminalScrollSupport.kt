@@ -46,9 +46,10 @@ object TerminalScrollSupport {
         try {
             val scrollingField = TerminalPanel::class.java.getDeclaredField("myScrollingEnabled")
             scrollingField.isAccessible = true
-            if (!scrollingField.getBoolean(terminalPanel)) {
-                scrollingField.setBoolean(terminalPanel, true)
+            if (scrollingField.getBoolean(terminalPanel)) {
+                return
             }
+            scrollingField.setBoolean(terminalPanel, true)
             val updateMethod = TerminalPanel::class.java.getDeclaredMethod(
                 "updateScrolling",
                 Boolean::class.javaPrimitiveType,

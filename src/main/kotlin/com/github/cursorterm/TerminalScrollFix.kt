@@ -45,12 +45,20 @@ class TerminalScrollFix(
     @Volatile
     private var programmaticScroll = false
 
+    @Volatile
+    private var outputFollowCoalesced = false
+
+    @Volatile
+    private var historyScrollingEnabled = true
+
     private var lastValue = BOTTOM_VALUE
 
     /** 仅由用户滚轮/滚动条写入，不被 TUI 被动滚动污染 */
     private var userAnchorValue = BOTTOM_VALUE
 
     private var lastUserScrollAt = 0L
+
+    private var postOutputGuardGeneration = 0
 
     fun onSubmitEnter() {
         runOnEdt {
@@ -92,8 +100,8 @@ class TerminalScrollFix(
                 "sendArrowKeysInAlternativeMode",
                 "simulateMouseScrollWithArrowKeysInAlternativeScreen",
                 -> false
-                // 滚轮始终走本地 scrollback，不等待 PTY 鼠标协议就绪
                 "forceActionOnMouseReporting" -> true
+                "getBufferMaxLinesCount" -> SCROLLBACK_LINE_CAP
                 else -> if (args == null) method.invoke(delegate) else method.invoke(delegate, *args)
             }
         }
@@ -142,22 +150,37 @@ class TerminalScrollFix(
     }
 
     /**
-     * cursor-agent 进入备用屏时 JediTerm 会关掉 myScrollingEnabled，
-     * 导致滚轮在拖滚动条之前完全无效。强制保持历史滚动可用。
+     * cursor-agent 进入备用屏时 JediTerm 会关掉 myScrollingEnabled。
+     * 仅在滚动被关闭时调用 updateScrolling，避免大 scrollback 下反复全量重算。
      */
     private fun ensureHistoryScrollingEnabled() {
+        if (historyScrollingEnabled) {
+            return
+        }
         try {
             val scrollingField = TerminalPanel::class.java.getDeclaredField("myScrollingEnabled")
             scrollingField.isAccessible = true
-            if (!scrollingField.getBoolean(terminalPanel)) {
-                scrollingField.setBoolean(terminalPanel, true)
+            if (scrollingField.getBoolean(terminalPanel)) {
+                historyScrollingEnabled = true
+                return
             }
+            scrollingField.setBoolean(terminalPanel, true)
             val updateMethod = TerminalPanel::class.java.getDeclaredMethod(
                 "updateScrolling",
                 Boolean::class.javaPrimitiveType,
             )
             updateMethod.isAccessible = true
             updateMethod.invoke(terminalPanel, true)
+            historyScrollingEnabled = true
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun refreshScrollingEnabledState() {
+        try {
+            val scrollingField = TerminalPanel::class.java.getDeclaredField("myScrollingEnabled")
+            scrollingField.isAccessible = true
+            historyScrollingEnabled = scrollingField.getBoolean(terminalPanel)
         } catch (_: Exception) {
         }
     }
@@ -232,48 +255,38 @@ class TerminalScrollFix(
 
     private fun installOutputFollow() {
         val textBuffer = terminalPanel.terminalTextBuffer
-        val onOutput = {
-            runOnEdt {
-                ensureHistoryScrollingEnabled()
-                followIfNeeded()
-                schedulePostOutputGuard()
-            }
-        }
-        textBuffer.addModelListener { onOutput() }
-        installHistoryBufferListenerIfSupported(textBuffer, onOutput)
+        textBuffer.addModelListener { requestOutputFollow() }
     }
 
-    private fun installHistoryBufferListenerIfSupported(textBuffer: Any, onOutput: () -> Unit) {
-        try {
-            val listenerClass = Class.forName("com.jediterm.terminal.model.TerminalHistoryBufferListener")
-            val listener = Proxy.newProxyInstance(
-                listenerClass.classLoader,
-                arrayOf(listenerClass),
-                InvocationHandler { _, method, _ ->
-                    if (method.name == "historyBufferLineCountChanged") {
-                        onOutput()
-                    }
-                    null
-                },
-            )
-            textBuffer.javaClass.getMethod("addHistoryBufferListener", listenerClass)
-                .invoke(textBuffer, listener)
-        } catch (_: Exception) {
-            // PyCharm 2023.3 等旧版 JediTerm 无此 API
-        }
+    private fun requestOutputFollow() {
+        if (outputFollowCoalesced) return
+        outputFollowCoalesced = true
+        alarm.addRequest({
+            outputFollowCoalesced = false
+            refreshScrollingEnabledState()
+            ensureHistoryScrollingEnabled()
+            followIfNeeded()
+            schedulePostOutputGuard()
+        }, OUTPUT_COALESCE_MS)
     }
 
     private fun scheduleFollowCheck() {
+        val delay = if (historyScrollingEnabled) FOLLOW_CHECK_IDLE_MS else FOLLOW_CHECK_MS
         alarm.addRequest({
+            refreshScrollingEnabledState()
             ensureHistoryScrollingEnabled()
             followIfNeeded()
             scheduleFollowCheck()
-        }, FOLLOW_CHECK_MS)
+        }, delay)
     }
 
     private fun schedulePostOutputGuard() {
+        val generation = ++postOutputGuardGeneration
         for (delay in POST_OUTPUT_GUARD_DELAYS_MS) {
-            alarm.addRequest({ recoverAnchorIfDrifted() }, delay)
+            alarm.addRequest({
+                if (generation != postOutputGuardGeneration) return@addRequest
+                recoverAnchorIfDrifted()
+            }, delay)
         }
     }
 
@@ -397,7 +410,10 @@ class TerminalScrollFix(
         }
 
         private const val BOTTOM_VALUE = 0
-        private const val FOLLOW_CHECK_MS = 80L
+        private const val SCROLLBACK_LINE_CAP = 5_000
+        private const val FOLLOW_CHECK_MS = 500L
+        private const val FOLLOW_CHECK_IDLE_MS = 2_000L
+        private const val OUTPUT_COALESCE_MS = 150L
         private const val USER_SCROLL_GRACE_MS = 350L
         private const val SPURIOUS_JUMP_DELTA = 25
         private const val ANCHOR_DRIFT_TOLERANCE = 8
