@@ -41,6 +41,12 @@ class CursorAgentTerminalController(
     @Volatile
     private var startingInitial = false
 
+    @Volatile
+    private var sessionLaunchAtMs = 0L
+
+    @Volatile
+    private var lastLaunchWasNewChat = false
+
     private var newChatButton: JButton? = null
 
     fun createToolbar(): JPanel {
@@ -111,9 +117,22 @@ class CursorAgentTerminalController(
             stopCurrentSession()
         }
 
-        val launchSpec = TerminalLauncher.buildLaunchSpec(project, mode)
+        val preferredSessionId = when (mode) {
+            TerminalLauncher.SessionMode.NEW_CHAT -> {
+                clearBoundSession()
+                lastLaunchWasNewChat = true
+                null
+            }
+            TerminalLauncher.SessionMode.RESUME_LAST -> {
+                lastLaunchWasNewChat = false
+                readBoundSession()
+            }
+        }
+
+        sessionLaunchAtMs = System.currentTimeMillis()
+        val launchSpec = TerminalLauncher.buildLaunchSpec(project, mode, preferredSessionId)
         launchSpec.resumedSessionId?.let { sessionId ->
-            CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
+            recordBoundSession(sessionId)
         }
 
         val disposable = Disposer.newDisposable("CursorAgentTerminalSession")
@@ -162,16 +181,32 @@ class CursorAgentTerminalController(
 
     private fun scheduleSessionDiscovery(parentDisposable: Disposable) {
         val alarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, parentDisposable)
-        listOf(1_000, 3_000, 8_000).forEach { delayMs ->
+        listOf(1_000, 3_000, 8_000, 20_000).forEach { delayMs ->
             alarm.addRequest({
                 ApplicationManager.getApplication().invokeLater {
                     if (!hasLiveSession()) return@invokeLater
-                    CursorAgentSessionStore.discoverLatestSession(project.basePath)?.let { sessionId ->
-                        CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
+                    CursorAgentSessionStore.adoptDiscoveredSession(
+                        project.basePath,
+                        readBoundSession(),
+                        sessionLaunchAtMs,
+                        lastLaunchWasNewChat,
+                    )?.let { sessionId ->
+                        recordBoundSession(sessionId)
                     }
                 }
             }, delayMs)
         }
+    }
+
+    private fun readBoundSession(): String? = content.getUserData(BOUND_SESSION_KEY)
+
+    private fun recordBoundSession(sessionId: String) {
+        content.putUserData(BOUND_SESSION_KEY, sessionId)
+        CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
+    }
+
+    private fun clearBoundSession() {
+        content.putUserData(BOUND_SESSION_KEY, null)
     }
 
     private fun showStartFailure(error: Exception) {
@@ -189,5 +224,8 @@ class CursorAgentTerminalController(
     companion object {
         val CONTROLLER_KEY: Key<CursorAgentTerminalController> =
             Key.create("cursorterm.agentTerminalController")
+
+        private val BOUND_SESSION_KEY: Key<String> =
+            Key.create("cursorterm.boundSessionId")
     }
 }
