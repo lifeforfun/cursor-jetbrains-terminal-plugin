@@ -35,7 +35,7 @@ object PathInjectFeature {
             }
             val starter = widget.terminalStarter ?: return@invokeLater
             widget.terminalPanel.requestFocusInWindow()
-            starter.sendString("\n$notation", true)
+            starter.sendString("\n$notation\n", true)
             DebugAgentLog.write("H-INJ", "PathInjectFeature", "sent", mapOf("notation" to notation))
         }
     }
