@@ -1,20 +1,17 @@
 <idea-plugin>
     <id>com.github.cursorterm.cursor-cli-terminal</id>
     <name>Cursor CLI Terminal</name>
-    <version>1.8.55</version>
+    <version>3.0.2</version>
     <vendor>cursorterm</vendor>
 
     <description><![CDATA[
-    Embeds cursor-agent in a JetBrains IDE tool window. Supports session resume,
-    Enter-to-append @file references from the active editor tab, and JediTerm scroll fixes.
-    Compatible with IntelliJ Platform 2023.3+ (build 233).
+    cursor-agent 工具窗：开启会话、注入 @ 路径、图片粘贴。不拦截 Enter，不修改终端滚动与输入行为。
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <postStartupActivity implementation="com.github.cursorterm.EditorContextStartupActivity" />
         <toolWindow id="com.github.cursorterm.agent"
             anchor="bottom"
             factoryClass="com.github.cursorterm.CursorTerminalToolWindowFactory"

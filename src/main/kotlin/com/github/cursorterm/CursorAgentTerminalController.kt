@@ -1,231 +1,81 @@
 package com.github.cursorterm
 
-import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
+import com.github.cursorterm.feature.ImagePasteFeature
+import com.github.cursorterm.feature.PathInjectFeature
+import com.github.cursorterm.feature.SessionFeature
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.content.Content
-import com.intellij.util.Alarm
-import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
-import org.jetbrains.plugins.terminal.ShellStartupOptions
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import java.awt.BorderLayout
-import java.awt.Component
+import java.awt.FlowLayout
 import javax.swing.JButton
+import javax.swing.JLabel
 import javax.swing.JPanel
 
 /**
- * 管理工具窗内 cursor-agent 终端的生命周期。
+ * 工具窗编排：三个功能模块彼此独立，仅通过显式按钮/快捷键触发。
  */
 class CursorAgentTerminalController(
     private val project: Project,
-    private val content: Content,
+    content: Content,
     private val panel: JPanel,
-    private val toolbar: JPanel,
-    private val projectDir: String,
+    toolbar: JPanel,
+    projectDir: String,
 ) {
+    private val session = SessionFeature(project, content, panel, projectDir)
+    private val imagePaste = ImagePasteFeature()
+    private val placeholder = JLabel("正在自动开启 cursor-agent 会话…")
 
-    @Volatile
-    private var sessionDisposable: Disposable? = null
-
-    @Volatile
-    private var shellWidget: ShellTerminalWidget? = null
-
-    @Volatile
-    private var terminalComponent: Component? = null
-
-    @Volatile
-    private var starting = false
-
-    @Volatile
-    private var startingInitial = false
-
-    @Volatile
-    private var sessionLaunchAtMs = 0L
-
-    @Volatile
-    private var lastLaunchWasNewChat = false
-
-    private var newChatButton: JButton? = null
-
-    fun createToolbar(): JPanel {
-        newChatButton = JButton("开启新对话").apply {
-            toolTipText = "结束当前对话并启动全新的 cursor-agent 会话"
-            addActionListener { startNewConversation() }
-        }
-        toolbar.add(newChatButton)
-        return toolbar
+    init {
+        panel.add(placeholder, BorderLayout.CENTER)
+        toolbar.layout = FlowLayout(FlowLayout.LEFT, 8, 4)
+        toolbar.add(JButton("开启会话").apply {
+            toolTipText = "会话进行中再次点击将开启全新对话"
+            addActionListener { onStartSession() }
+        })
+        toolbar.add(JButton("注入路径").apply {
+            toolTipText = "向终端注入当前激活标签页的 @ 路径"
+            addActionListener { onInjectPath() }
+        })
+        autoStartSessionIfNeeded()
     }
 
-    fun startInitialSessionIfNeeded() {
-        startInitialSession()
+    fun autoStartSessionIfNeeded() {
+        session.autoResumeIfNeeded(::onSessionReady)
     }
 
-    fun startInitialSession() {
-        if (hasLiveSession() || starting || startingInitial) {
+    private fun onStartSession() {
+        session.start(::onSessionReady)
+    }
+
+    private fun onSessionReady(widget: ShellTerminalWidget) {
+        panel.remove(placeholder)
+        val disposable = session.sessionDisposable() ?: return
+        imagePaste.install(widget, disposable)
+    }
+
+    private fun onInjectPath() {
+        if (!session.isLive()) {
+            session.autoResumeIfNeeded { widget ->
+                onSessionReady(widget)
+                PathInjectFeature.inject(project, widget)
+            }
             return
         }
-        startingInitial = true
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                if (!hasLiveSession() && !starting) {
-                    startSession(TerminalLauncher.SessionMode.RESUME_LAST)
-                }
-            } finally {
-                startingInitial = false
-            }
-        }
-    }
-
-    fun startNewConversation() {
-        if (starting || startingInitial) return
-        starting = true
-        newChatButton?.isEnabled = false
-        CursorAgentSessionStore.invalidateCache(project.basePath)
-
-        ApplicationManager.getApplication().invokeLater {
-            try {
-                stopCurrentSession()
-                startSession(TerminalLauncher.SessionMode.NEW_CHAT)
-            } finally {
-                starting = false
-                newChatButton?.isEnabled = true
-            }
-        }
-    }
-
-    private fun hasLiveSession(): Boolean {
-        val disposable = sessionDisposable ?: return false
-        return !Disposer.isDisposed(disposable) && shellWidget != null && terminalComponent != null
-    }
-
-    private fun stopCurrentSession() {
-        sessionDisposable?.let { Disposer.dispose(it) }
-        sessionDisposable = null
-        shellWidget = null
-        EditorContextOnSubmitSupport.resetForRestart(content)
-        TerminalScrollFix.clearForRestart(content)
-        terminalComponent?.let { panel.remove(it) }
-        terminalComponent = null
-        panel.revalidate()
-        panel.repaint()
-    }
-
-    private fun startSession(mode: TerminalLauncher.SessionMode) {
-        if (hasLiveSession()) {
-            stopCurrentSession()
-        }
-
-        val preferredSessionId = when (mode) {
-            TerminalLauncher.SessionMode.NEW_CHAT -> {
-                clearBoundSession()
-                lastLaunchWasNewChat = true
-                null
-            }
-            TerminalLauncher.SessionMode.RESUME_LAST -> {
-                lastLaunchWasNewChat = false
-                readBoundSession()
-            }
-        }
-
-        sessionLaunchAtMs = System.currentTimeMillis()
-        val launchSpec = TerminalLauncher.buildLaunchSpec(project, mode, preferredSessionId)
-        launchSpec.resumedSessionId?.let { sessionId ->
-            recordBoundSession(sessionId)
-        }
-
-        val disposable = Disposer.newDisposable("CursorAgentTerminalSession")
-        Disposer.register(content, disposable)
-        sessionDisposable = disposable
-
-        try {
-            val runner = LocalTerminalDirectRunner.createTerminalRunner(project)
-            val options = ShellStartupOptions.Builder()
-                .workingDirectory(projectDir)
-                .shellCommand(launchSpec.shellCommand)
-                .build()
-
-            val terminalWidget = TerminalWidgetStartSupport.start(runner, disposable, options)
-            val widget = ShellTerminalWidgetSupport.resolve(terminalWidget)
-            shellWidget = widget
-
-            val ui = TerminalWidgetStartSupport.uiComponent(terminalWidget, widget)
-            terminalComponent = ui
-            panel.add(ui, BorderLayout.CENTER)
-            panel.revalidate()
-            panel.repaint()
-
-            EditorContextOnSubmitSupport.installOnce(project, widget, content)
-            TerminalScrollFix.installOn(content, widget, disposable)
-            try {
-                ImagePasteSupport(widget, disposable).install()
-            } catch (_: Exception) {
-                // 可选功能
-            }
-            try {
-                TerminalShiftSelectionSupport(widget.terminalPanel, disposable).install()
-            } catch (_: Exception) {
-                // 可选功能
-            }
-
-            scheduleSessionDiscovery(disposable)
-        } catch (e: Exception) {
-            Disposer.dispose(disposable)
-            sessionDisposable = null
-            shellWidget = null
-            terminalComponent = null
-            showStartFailure(e)
-        }
-    }
-
-    private fun scheduleSessionDiscovery(parentDisposable: Disposable) {
-        val alarm = Alarm(Alarm.ThreadToUse.POOLED_THREAD, parentDisposable)
-        listOf(1_000, 3_000, 8_000, 20_000).forEach { delayMs ->
-            alarm.addRequest({
-                ApplicationManager.getApplication().invokeLater {
-                    if (!hasLiveSession()) return@invokeLater
-                    CursorAgentSessionStore.adoptDiscoveredSession(
-                        project.basePath,
-                        readBoundSession(),
-                        sessionLaunchAtMs,
-                        lastLaunchWasNewChat,
-                    )?.let { sessionId ->
-                        recordBoundSession(sessionId)
-                    }
-                }
-            }, delayMs)
-        }
-    }
-
-    private fun readBoundSession(): String? = content.getUserData(BOUND_SESSION_KEY)
-
-    private fun recordBoundSession(sessionId: String) {
-        content.putUserData(BOUND_SESSION_KEY, sessionId)
-        CursorAgentSessionStore.recordActiveSession(project.basePath, sessionId)
-    }
-
-    private fun clearBoundSession() {
-        content.putUserData(BOUND_SESSION_KEY, null)
-    }
-
-    private fun showStartFailure(error: Exception) {
-        error.printStackTrace()
-        panel.removeAll()
-        panel.add(toolbar, BorderLayout.NORTH)
-        panel.add(
-            javax.swing.JLabel("Cursor Agent 启动失败: ${error.message ?: error.javaClass.simpleName}"),
-            BorderLayout.CENTER,
-        )
-        panel.revalidate()
-        panel.repaint()
+        PathInjectFeature.inject(project, session.shellWidget())
     }
 
     companion object {
-        val CONTROLLER_KEY: Key<CursorAgentTerminalController> =
-            Key.create("cursorterm.agentTerminalController")
+        const val TOOL_WINDOW_ID = "com.github.cursorterm.agent"
+        val CONTROLLER_KEY: Key<CursorAgentTerminalController> = Key.create("cursorterm.controller")
 
-        private val BOUND_SESSION_KEY: Key<String> =
-            Key.create("cursorterm.boundSessionId")
+        fun of(project: Project): CursorAgentTerminalController? =
+            ToolWindowManager.getInstance(project)
+                .getToolWindow(TOOL_WINDOW_ID)
+                ?.contentManager
+                ?.getContent(0)
+                ?.getUserData(CONTROLLER_KEY)
     }
 }
