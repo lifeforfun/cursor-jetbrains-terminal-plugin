@@ -52,7 +52,6 @@ class CursorAgentTerminalController(
     }
 
     private fun onSessionReady(access: TerminalAccess) {
-        panel.remove(placeholder)
         val disposable = session.sessionDisposable() ?: return
         imagePaste.install(access, disposable)
         TerminalInteractionFeature.install(project, access, disposable)

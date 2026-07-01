@@ -15,7 +15,6 @@ import com.intellij.terminal.ui.TerminalWidget
 import com.intellij.ui.content.Content
 import com.intellij.util.Alarm
 import org.jetbrains.plugins.terminal.ShellStartupOptions
-import java.awt.BorderLayout
 import java.awt.Component
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -105,13 +104,10 @@ class SessionFeature(
                 .shellCommand(spec.shellCommand)
                 .envVariables(mapOf("NO_HYPERLINK" to "1"))
                 .build()
-            val widget = TerminalBootstrap.start(runner, disposable, options)
+            val widget = TerminalBootstrap.startBlocking(runner, disposable, options, panel)
             terminalWidget = widget
-            val ui = TerminalBootstrap.uiComponent(widget)
-            terminalComponent = ui
-            panel.add(ui, BorderLayout.CENTER)
-            panel.revalidate()
-            panel.repaint()
+            terminalComponent = TerminalBootstrap.uiComponent(widget)
+            widget.preferredFocusableComponent.requestFocusInWindow()
             scheduleAdopt(disposable, newChat)
             DebugAgentLog.write(
                 "H-SESS",
@@ -121,14 +117,16 @@ class SessionFeature(
             )
             onReady(TerminalAccess(widget))
         } catch (e: Exception) {
-            stop()
-            panel.add(JLabel("会话启动失败: ${e.message}"), BorderLayout.CENTER)
-            panel.revalidate()
-            panel.repaint()
-            DebugAgentLog.write("H-SESS", "SessionFeature", "failed", mapOf("error" to e.message))
+            onStartFailed(e)
         } finally {
             starting = false
         }
+    }
+
+    private fun onStartFailed(e: Exception) {
+        stop()
+        TerminalBootstrap.mountCenter(panel, JLabel("会话启动失败: ${e.message}"))
+        DebugAgentLog.write("H-SESS", "SessionFeature", "failed", mapOf("error" to e.message))
     }
 
     private fun scheduleAdopt(parent: Disposable, requireFreshSession: Boolean) {
