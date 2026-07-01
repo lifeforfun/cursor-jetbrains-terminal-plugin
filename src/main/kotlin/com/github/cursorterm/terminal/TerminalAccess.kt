@@ -6,6 +6,8 @@ import com.jediterm.terminal.TtyConnector
 import com.jediterm.terminal.ui.TerminalPanel
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import java.awt.Component
+import java.awt.Container
 import javax.swing.JComponent
 
 /** 统一 Block / Classic 终端的输入输出与视图访问。 */
@@ -19,7 +21,20 @@ class TerminalAccess(val widget: TerminalWidget) {
         return BlockTerminalReflection.shellWidgetFromContentView(widget)
     }
 
-    fun terminalPanelOrNull(): TerminalPanel? = shellWidgetOrNull()?.terminalPanel
+    fun terminalPanelOrNull(): TerminalPanel? {
+        shellWidgetOrNull()?.terminalPanel?.let { return it }
+        return findTerminalPanel(widget.component)
+    }
+
+    private fun findTerminalPanel(root: Component): TerminalPanel? {
+        if (root is TerminalPanel) return root
+        if (root is Container) {
+            for (i in 0 until root.componentCount) {
+                findTerminalPanel(root.getComponent(i))?.let { return it }
+            }
+        }
+        return null
+    }
 
     fun sendString(text: String) {
         terminalStarterOrNull()?.let {

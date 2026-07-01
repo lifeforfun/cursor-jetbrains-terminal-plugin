@@ -11,7 +11,7 @@ internal object BlockTerminalReflection {
 
     fun shellWidgetFromContentView(widget: TerminalWidget): ShellTerminalWidget? {
         val view = contentView(widget) ?: return null
-        if (!view.javaClass.simpleName.contains("OldPlain")) return null
+        if (view.javaClass.simpleName.contains("Placeholder")) return null
         return TerminalReflection.readField(view, "widget") as? ShellTerminalWidget
     }
 
