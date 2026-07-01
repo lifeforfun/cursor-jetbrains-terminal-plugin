@@ -4,7 +4,6 @@ import com.intellij.terminal.ui.TerminalWidget
 import com.jediterm.terminal.TerminalStarter
 import com.jediterm.terminal.TtyConnector
 import com.jediterm.terminal.ui.TerminalPanel
-import org.jetbrains.plugins.terminal.LocalBlockTerminalRunner
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import javax.swing.JComponent
@@ -54,6 +53,6 @@ class TerminalAccess(val widget: TerminalWidget) {
 
     companion object {
         fun createRunner(project: com.intellij.openapi.project.Project): LocalTerminalDirectRunner =
-            LocalBlockTerminalRunner(project)
+            TerminalRunnerFactory.create(project)
     }
 }

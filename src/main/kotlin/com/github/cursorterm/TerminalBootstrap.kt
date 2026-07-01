@@ -1,6 +1,7 @@
 package com.github.cursorterm
 
 import com.github.cursorterm.terminal.TerminalReflection
+import com.github.cursorterm.terminal.TerminalRunnerFactory
 import com.intellij.openapi.Disposable
 import com.intellij.terminal.ui.TerminalWidget
 import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
@@ -9,8 +10,22 @@ import java.awt.Component
 
 internal object TerminalBootstrap {
 
-    /** 创建 Block 终端、挂载面板，再 openSession（configureStartupOptions 仅由终端插件在 BGT 调用一次）。 */
     fun startBlocking(
+        runner: LocalTerminalDirectRunner,
+        parent: Disposable,
+        options: ShellStartupOptions,
+        panel: java.awt.Container,
+    ): TerminalWidget {
+        val widget = if (TerminalRunnerFactory.isBlockRunner(runner)) {
+            startBlockTerminal(runner, parent, options, panel)
+        } else {
+            startClassicTerminal(runner, parent, options, panel)
+        }
+        return widget
+    }
+
+    /** Block 终端：先挂载 widget，再 openSession（configureStartupOptions 仅调用一次）。 */
+    private fun startBlockTerminal(
         runner: LocalTerminalDirectRunner,
         parent: Disposable,
         options: ShellStartupOptions,
@@ -19,6 +34,19 @@ internal object TerminalBootstrap {
         val widget = createShellWidget(runner, parent)
         mountCenter(panel, widget.component)
         openShellSession(runner, widget, options.builder().widget(widget).build())
+        return widget
+    }
+
+    /** Classic 终端（GoLand 2023.x 等）：沿用 startShellTerminalWidget 流程。 */
+    private fun startClassicTerminal(
+        runner: LocalTerminalDirectRunner,
+        parent: Disposable,
+        options: ShellStartupOptions,
+        panel: java.awt.Container,
+    ): TerminalWidget {
+        val configured = runner.configureStartupOptions(options)
+        val widget = runner.startShellTerminalWidget(parent, configured, false)
+        mountCenter(panel, widget.component)
         return widget
     }
 
