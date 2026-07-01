@@ -5,6 +5,7 @@ import com.github.cursorterm.feature.PathInjectFeature
 import com.github.cursorterm.feature.SessionFeature
 import com.github.cursorterm.feature.TerminalInteractionFeature
 import com.github.cursorterm.terminal.TerminalAccess
+import com.github.cursorterm.terminal.TerminalScrollSupport
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.wm.ToolWindowManager
@@ -40,6 +41,10 @@ class CursorAgentTerminalController(
             toolTipText = "向终端注入当前激活标签页的 @ 路径"
             addActionListener { onInjectPath() }
         })
+        toolbar.add(JButton("滚到底部").apply {
+            toolTipText = "将终端滚动到最底部（输入区）"
+            addActionListener { onScrollToBottom() }
+        })
         autoStartSessionIfNeeded()
     }
 
@@ -66,6 +71,17 @@ class CursorAgentTerminalController(
             return
         }
         PathInjectFeature.inject(project, session.terminalAccess())
+    }
+
+    private fun onScrollToBottom() {
+        val access = session.terminalAccess() ?: run {
+            session.autoResumeIfNeeded { ready ->
+                onSessionReady(ready)
+                TerminalScrollSupport.scrollToBottom(ready)
+            }
+            return
+        }
+        TerminalScrollSupport.scrollToBottom(access)
     }
 
     companion object {
