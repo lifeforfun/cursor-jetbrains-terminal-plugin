@@ -3,11 +3,12 @@ package com.github.cursorterm
 import com.github.cursorterm.feature.ImagePasteFeature
 import com.github.cursorterm.feature.PathInjectFeature
 import com.github.cursorterm.feature.SessionFeature
+import com.github.cursorterm.feature.TerminalInteractionFeature
+import com.github.cursorterm.terminal.TerminalAccess
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.content.Content
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.JButton
@@ -15,7 +16,7 @@ import javax.swing.JLabel
 import javax.swing.JPanel
 
 /**
- * 工具窗编排：三个功能模块彼此独立，仅通过显式按钮/快捷键触发。
+ * 工具窗编排：会话、路径注入、图片粘贴与终端交互增强彼此独立。
  */
 class CursorAgentTerminalController(
     private val project: Project,
@@ -50,21 +51,22 @@ class CursorAgentTerminalController(
         session.start(::onSessionReady)
     }
 
-    private fun onSessionReady(widget: ShellTerminalWidget) {
+    private fun onSessionReady(access: TerminalAccess) {
         panel.remove(placeholder)
         val disposable = session.sessionDisposable() ?: return
-        imagePaste.install(widget, disposable)
+        imagePaste.install(access, disposable)
+        TerminalInteractionFeature.install(project, access, disposable)
     }
 
     private fun onInjectPath() {
         if (!session.isLive()) {
-            session.autoResumeIfNeeded { widget ->
-                onSessionReady(widget)
-                PathInjectFeature.inject(project, widget)
+            session.autoResumeIfNeeded { access ->
+                onSessionReady(access)
+                PathInjectFeature.inject(project, access)
             }
             return
         }
-        PathInjectFeature.inject(project, session.shellWidget())
+        PathInjectFeature.inject(project, session.terminalAccess())
     }
 
     companion object {

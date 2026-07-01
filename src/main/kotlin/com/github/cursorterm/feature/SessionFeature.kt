@@ -4,24 +4,24 @@ import com.github.cursorterm.CursorAgentSessionStore
 import com.github.cursorterm.DebugAgentLog
 import com.github.cursorterm.TerminalBootstrap
 import com.github.cursorterm.TerminalLauncher
+import com.github.cursorterm.terminal.TerminalAccess
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
+import com.intellij.terminal.ui.TerminalWidget
 import com.intellij.ui.content.Content
 import com.intellij.util.Alarm
-import org.jetbrains.plugins.terminal.LocalTerminalDirectRunner
 import org.jetbrains.plugins.terminal.ShellStartupOptions
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import java.awt.BorderLayout
 import java.awt.Component
 import javax.swing.JLabel
 import javax.swing.JPanel
 
 /**
- * 功能一：开启会话。仅负责 cursor-agent 终端生命周期，不拦截按键、不修改滚动。
+ * 功能一：开启会话。使用 Block 终端，仅负责 cursor-agent 生命周期。
  */
 class SessionFeature(
     private val project: Project,
@@ -30,21 +30,21 @@ class SessionFeature(
     private val projectDir: String,
 ) {
     @Volatile private var sessionDisposable: Disposable? = null
-    @Volatile private var shellWidget: ShellTerminalWidget? = null
+    @Volatile private var terminalWidget: TerminalWidget? = null
     @Volatile private var terminalComponent: Component? = null
     @Volatile private var starting = false
     @Volatile private var sessionLaunchAtMs = 0L
 
     fun isLive(): Boolean {
         val d = sessionDisposable ?: return false
-        return !Disposer.isDisposed(d) && shellWidget != null
+        return !Disposer.isDisposed(d) && terminalWidget != null
     }
 
-    fun shellWidget(): ShellTerminalWidget? = shellWidget
+    fun terminalAccess(): TerminalAccess? = terminalWidget?.let { TerminalAccess(it) }
 
     fun sessionDisposable(): Disposable? = sessionDisposable
 
-    fun autoResumeIfNeeded(onReady: (ShellTerminalWidget) -> Unit) {
+    fun autoResumeIfNeeded(onReady: (TerminalAccess) -> Unit) {
         if (starting || isLive()) return
         ApplicationManager.getApplication().invokeLater {
             if (starting || isLive()) return@invokeLater
@@ -53,7 +53,7 @@ class SessionFeature(
         }
     }
 
-    fun start(onReady: (ShellTerminalWidget) -> Unit) {
+    fun start(onReady: (TerminalAccess) -> Unit) {
         if (starting) return
         if (isLive()) {
             if (Messages.showYesNoDialog(
@@ -74,14 +74,14 @@ class SessionFeature(
     fun stop() {
         sessionDisposable?.let { Disposer.dispose(it) }
         sessionDisposable = null
-        shellWidget = null
+        terminalWidget = null
         terminalComponent?.let { panel.remove(it) }
         terminalComponent = null
         panel.revalidate()
         panel.repaint()
     }
 
-    private fun startInternal(onReady: (ShellTerminalWidget) -> Unit, newChat: Boolean) {
+    private fun startInternal(onReady: (TerminalAccess) -> Unit, newChat: Boolean) {
         if (starting) return
         starting = true
         try {
@@ -99,15 +99,15 @@ class SessionFeature(
             Disposer.register(content, disposable)
             sessionDisposable = disposable
 
-            val runner = LocalTerminalDirectRunner.createTerminalRunner(project)
+            val runner = TerminalAccess.createRunner(project)
             val options = ShellStartupOptions.Builder()
                 .workingDirectory(projectDir)
                 .shellCommand(spec.shellCommand)
+                .envVariables(mapOf("NO_HYPERLINK" to "1"))
                 .build()
-            val tw = TerminalBootstrap.start(runner, disposable, options)
-            val widget = TerminalBootstrap.resolveShellWidget(tw)
-            shellWidget = widget
-            val ui = TerminalBootstrap.uiComponent(tw, widget)
+            val widget = TerminalBootstrap.start(runner, disposable, options)
+            terminalWidget = widget
+            val ui = TerminalBootstrap.uiComponent(widget)
             terminalComponent = ui
             panel.add(ui, BorderLayout.CENTER)
             panel.revalidate()
@@ -119,7 +119,7 @@ class SessionFeature(
                 if (newChat) "started-new" else "started",
                 mapOf("resumed" to spec.resumedSessionId, "newChat" to newChat),
             )
-            onReady(widget)
+            onReady(TerminalAccess(widget))
         } catch (e: Exception) {
             stop()
             panel.add(JLabel("会话启动失败: ${e.message}"), BorderLayout.CENTER)

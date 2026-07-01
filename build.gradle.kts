@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.github.cursorterm"
-version = "3.0.2"
+version = "3.2.0"
 
 repositories {
     mavenCentral()
@@ -18,6 +18,7 @@ dependencies {
         goland("2025.1")
         bundledPlugin("org.jetbrains.plugins.terminal")
     }
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }
 
 java {
@@ -61,5 +62,9 @@ tasks {
 
     named("build") {
         dependsOn(verifyPluginZip)
+    }
+
+    test {
+        useJUnitPlatform()
     }
 }

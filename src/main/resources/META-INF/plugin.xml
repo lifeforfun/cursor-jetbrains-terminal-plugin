@@ -1,11 +1,11 @@
 <idea-plugin>
     <id>com.github.cursorterm.cursor-cli-terminal</id>
     <name>Cursor CLI Terminal</name>
-    <version>3.0.2</version>
+    <version>3.2.0</version>
     <vendor>cursorterm</vendor>
 
     <description><![CDATA[
-    cursor-agent 工具窗：开启会话、注入 @ 路径、图片粘贴。不拦截 Enter，不修改终端滚动与输入行为。
+    cursor-agent 工具窗：开启会话、注入 @ 路径、图片粘贴；URL 纯文本展示、Shift 扩选。不拦截 Enter，不修改终端滚动。
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

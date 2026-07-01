@@ -31,6 +31,11 @@ JetBrains IDE 插件，在底部工具窗内集成 [cursor-agent](https://cursor
 - 剪贴板为 **图片** 时，`Ctrl+V`（macOS 为 `Cmd+V`）会向 cursor-agent 发送 `0x16`（SYN），触发 Agent 的图片粘贴能力。
 - 剪贴板为 **纯文本** 时不拦截，走终端默认粘贴逻辑。
 
+### 4. 终端交互增强
+
+- **URL 纯文本展示**：读路径剥离 OSC8 超链接控制序列，去掉链式下划线，减少链接后全文带下划线；启动时注入 `NO_HYPERLINK=1` 提示 cursor-agent 少发超链接序列。
+- **Shift 扩选**（Jedi 面板）：先点选起点，滚动后 `Shift+点击` 扩展选区。
+
 ## 设计原则
 
 插件刻意保持「轻介入」：
@@ -87,13 +92,16 @@ src/main/kotlin/com/github/cursorterm/
 ├── CursorTerminalToolWindowFactory.kt   # 工具窗入口
 ├── CursorAgentTerminalController.kt     # 功能编排与工具栏
 ├── TerminalLauncher.kt                  # cursor-agent 启动命令构建
-├── TerminalBootstrap.kt                   # 终端 Widget 兼容层
-├── CursorAgentSessionStore.kt             # 会话 ID 解析与持久化
-├── EditorContextCollector.kt              # 编辑器 @ 路径采集
+├── TerminalBootstrap.kt                 # 终端 Widget 兼容层
+├── CursorAgentSessionStore.kt           # 会话 ID 解析与持久化
+├── EditorContextCollector.kt            # 编辑器 @ 路径采集
+├── terminal/                            # Block / Classic 终端访问层
 └── feature/
-    ├── SessionFeature.kt                  # 会话生命周期
-    ├── PathInjectFeature.kt               # 路径注入
-    └── ImagePasteFeature.kt               # 图片粘贴
+    ├── SessionFeature.kt                # 会话生命周期
+    ├── PathInjectFeature.kt             # 路径注入
+    ├── ImagePasteFeature.kt             # 图片粘贴
+    ├── TerminalInteractionFeature.kt    # 交互增强编排
+    └── TerminalPlainTextFeature.kt      # URL 纯文本输出过滤
 ```
 
 ## 会话存储说明
@@ -108,4 +116,18 @@ cursor-agent 本地会话目录结构：
 
 ## 版本
 
-当前版本：**3.0.2**（见 `build.gradle.kts` / `plugin.xml`）
+当前版本：**3.2.0**（见 `build.gradle.kts` / `plugin.xml`）
+
+### 变更记录
+
+#### 3.2.0
+
+- **Block 终端**：直接 `exec cursor-agent`（不经 shell 包装），`CURSOR_AGENT_PATH` / IDE PATH 解析，可移植启动。
+- **URL 纯文本展示**：Tty 读路径剥离 OSC8 与链式下划线；会话启动注入 `NO_HYPERLINK=1`。
+- **Shift 扩选**：Jedi 面板支持滚动后 Shift 扩展选区。
+- **模块拆分**：`terminal/` 统一 Block/Classic 访问；`TerminalInteractionFeature` 独立安装各子功能。
+- 未纳入：跨行 URL 点击、悬停/点击拦截（IDE 内置超链接无法可靠关闭，已放弃）。
+
+#### 3.0.2
+
+- 会话 / 路径注入 / 图片粘贴模块化；工具窗图标。

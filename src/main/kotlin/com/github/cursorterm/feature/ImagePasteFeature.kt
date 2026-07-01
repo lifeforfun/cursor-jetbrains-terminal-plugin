@@ -1,30 +1,27 @@
 package com.github.cursorterm.feature
 
 import com.github.cursorterm.DebugAgentLog
+import com.github.cursorterm.terminal.TerminalAccess
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.event.KeyEvent
 import javax.swing.KeyStroke
 
 /**
- * 功能三：粘贴图片。仅当剪贴板含图片时接管 Ctrl+V，向 agent 发送 0x16；文本粘贴不受影响。
+ * 功能三：粘贴图片。仅当剪贴板含图片时接管 Ctrl+V，向 agent 发送 0x16。
  */
 class ImagePasteFeature {
 
     @Volatile private var installedFor: Disposable? = null
 
-    fun install(shellWidget: ShellTerminalWidget, parentDisposable: Disposable) {
-        if (installedFor === parentDisposable) {
-            DebugAgentLog.write("H-IMG", "ImagePasteFeature", "already-installed", emptyMap())
-            return
-        }
+    fun install(access: TerminalAccess, parentDisposable: Disposable) {
+        if (installedFor === parentDisposable) return
         installedFor = parentDisposable
         val action = object : DumbAwareAction() {
             override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
@@ -34,12 +31,13 @@ class ImagePasteFeature {
             }
 
             override fun actionPerformed(e: AnActionEvent) {
-                forwardImagePaste(shellWidget)
+                access.sendBytes(byteArrayOf(0x16))
+                DebugAgentLog.write("H-IMG", "ImagePasteFeature", "sent-ctrl-v", emptyMap())
             }
         }
         action.registerCustomShortcutSet(
             CustomShortcutSet(pasteKeyStroke()),
-            shellWidget.terminalPanel,
+            access.focusComponent,
             parentDisposable,
         )
         DebugAgentLog.write("H-IMG", "ImagePasteFeature", "installed", emptyMap())
@@ -54,11 +52,5 @@ class ImagePasteFeature {
         CopyPasteManager.getInstance().areDataFlavorsAvailable(DataFlavor.imageFlavor)
     } catch (_: Exception) {
         false
-    }
-
-    private fun forwardImagePaste(shellWidget: ShellTerminalWidget) {
-        val starter = shellWidget.terminalStarter ?: return
-        starter.sendBytes(byteArrayOf(0x16), true)
-        DebugAgentLog.write("H-IMG", "ImagePasteFeature", "sent-ctrl-v", emptyMap())
     }
 }
